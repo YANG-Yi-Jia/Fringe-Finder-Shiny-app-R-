@@ -1,0 +1,2169 @@
+---
+title: "ggplot3.0"
+output: html_document
+date: "2025-11-11"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(lubridate)
+library(readxl)
+library(tidyverse)
+library(stringr)
+library(forcats)
+library(scales)
+library(tidyr)
+library(RColorBrewer)
+library(tibble)
+library(writexl)
+```
+
+```{r}
+data_all <- bind_rows(
+  read_excel("2022.xlsx", skip = 2),
+  read_excel("2023.xlsx", skip = 2),
+  read_excel("2024.xlsx", skip = 2),
+  read_excel("2025.xlsx", skip = 2)
+)
+
+print(colnames(data_all))
+```
+
+Why: This chart shows how many unique events ran each year, so readers can instantly see recovery and growth and use that scale to interpret later plots on prices, genres, and venues, and it is also shows the volumn of the festival each year which is a evidence of this festival getting more and more famous. 
+
+Who: It serves organizers, venues, sponsors, media, and any reader who first wants the headline “how big was the festival this year?”. 
+
+How: We use Year and Code (event ID), drop blank and NA codes, deduplicate by (Year, Code) so each event is counted once per year, count events per year, and fill any missing years to keep a continuous axis; labels are added for readability. Note this is event-level (not total performances), so an event with many shows still counts once in that year.
+
+```{r}
+years <- 2022:2025
+
+events_per_year <- data_all %>%
+  transmute(
+    Year = as.integer(.data[["Year"]]),
+    Code = as.character(.data[["Code"]])
+  ) %>%
+  filter(
+    Year %in% years,
+    !is.na(Code), Code != ""
+  ) %>%
+  distinct(Year, Code) %>%
+  count(Year, name = "event_count") %>%
+  complete(Year = years, fill = list(event_count = 0)) %>%
+  arrange(Year)
+
+
+ggplot(events_per_year, aes(x = Year, y = event_count, group = 1)) +
+  geom_line(linewidth = 0.9) +
+  geom_point(size = 2) +
+  geom_text(aes(label = comma(event_count)), vjust = -0.6, size = 3.5) +
+  scale_x_continuous(breaks = years) +
+  scale_y_continuous(labels = comma) +
+  labs(
+    title = paste0("Total number of unique events per year (", min(years), "–", max(years), ")"),
+    x = "Year", y = "Number of events"
+  ) +
+  theme_minimal(base_size = 12)
+
+ggplot(events_per_year, aes(x = factor(Year), y = event_count)) +
+  geom_col(width = 0.65) +
+  geom_text(aes(label = comma(event_count)), vjust = -0.4, size = 3.5) +
+  labs(x = "Year", y = "Number of events") +
+  theme_minimal(base_size = 12)
+```
+
+Why: This chart isolates structural change in the programme by showing each genre’s within-year share from 2022–2025, so you can see which genres expand or contract relative to the whole programme (not just because the festival gets bigger or smaller overall), which is more actionable for fine-grained slotting and campaign planning than raw growth counts alone.
+
+Who: Festival programmers, venues, and marketing teams use it to allocate stage time, tailor promotions, and anticipate audience demand; journalists and researchers use it to describe shifts in cultural/market composition without conflating them with changes in total event volume.
+
+How: From data_all we filter to 2022–2025, drop missing/blank Code and Genre, and de-duplicate at the event level by keeping unique (Year, Code, Genre) so each event contributes once to the mix; we then count events per (Year, Genre) and compute the within-year proportion share = events / Σ(events) for each year, derive a consistent genre ordering based on the latest-year share (tie-broken by total volume), and plot the results as faceted horizontal bar charts with percentage labels (and optional year totals) so cross-year mix changes are directly comparable.
+
+```{r, fig.width=8}
+years <- 2022:2025
+last_year <- max(years)
+
+# one row per (Year, Code, Genre)
+genre_base <- data_all %>%
+  transmute(
+    Year  = as.integer(.data[["Year"]]),
+    Code  = as.character(.data[["Code"]]),
+    Genre = str_squish(as.character(.data[["Genre"]]))
+  ) %>%
+  filter(
+    Year %in% years,
+    !is.na(Code),  Code  != "",
+    !is.na(Genre), Genre != ""
+  ) %>%
+  distinct(Year, Code, Genre)
+
+# counts + within-year share
+mix_share <- genre_base %>%
+  count(Year, Genre, name = "events") %>%
+  group_by(Year) %>%
+  mutate(year_total = sum(events), share = events / year_total) %>%
+  ungroup()
+
+# order genres by last-year share then total events
+order_levels <- mix_share %>%
+  group_by(Genre) %>%
+  summarise(
+    share_last = max(share[Year == last_year], na.rm = TRUE),
+    total      = sum(events),
+    .groups    = "drop"
+  ) %>%
+  mutate(share_last = ifelse(is.infinite(share_last), 0, share_last)) %>%
+  arrange(desc(share_last), desc(total)) %>%
+  pull(Genre)
+
+mix_share <- mix_share %>%
+  mutate(
+    Genre = factor(Genre, levels = order_levels),
+    YearF = factor(Year, levels = years)   # 给柱图/分面用
+  )
+
+year_totals <- mix_share %>% distinct(YearF, year_total)
+
+# Plot 1: stacked shares + totals
+ggplot(mix_share, aes(x = YearF, y = share, fill = Genre)) +
+  geom_col(width = 0.85) +
+  geom_text(
+    aes(label = percent(share, accuracy = 1)),
+    position = position_fill(vjust = 0.5),
+    color = "white", size = 2.6
+  ) +
+  geom_text(
+    data = year_totals,
+    aes(x = YearF, y = 1.05, label = comma(year_total)),
+    inherit.aes = FALSE, size = 3.1
+  ) +
+  scale_y_continuous(labels = percent, expand = expansion(mult = c(0, 0.10))) +
+  labs(
+    title = "Genre mix (share of unique events) — 2022–2025",
+    x = "Year", y = "Share", fill = "Genre"
+  ) +
+  coord_cartesian(clip = "off") +
+  theme_minimal(base_size = 12)
+
+# Plot 2: horizontal shares, faceted by year
+ggplot(mix_share, aes(x = share, y = Genre, fill = Genre)) +
+  geom_col(width = 0.7, show.legend = FALSE) +
+  geom_text(aes(label = percent(share, accuracy = 1)), hjust = -0.1, size = 3) +
+  scale_x_continuous(labels = percent, expand = expansion(mult = c(0, 0.10))) +
+  facet_wrap(~ YearF, nrow = 1) +
+  labs(
+    title = "Genre mix (share of unique events) — 2022–2025",
+    x = "Share of events", y = "Genre"
+  ) +
+  coord_cartesian(clip = "off") +
+  theme_minimal(base_size = 12)
+
+# trend table (counts per genre-year, completed)
+trend_full <- genre_base %>%
+  count(Year, Genre, name = "events") %>%
+  complete(Year = years, Genre, fill = list(events = 0)) %>%
+  mutate(
+    Genre = factor(Genre, levels = order_levels),
+    YearF = factor(Year, levels = years)
+  )
+
+# Plot 3: line trends (use numeric Year directly)
+ggplot(trend_full, aes(x = Year, y = events, group = Genre)) +
+  geom_line() +
+  geom_point(size = 1.8) +
+  geom_text(aes(label = comma(events)), vjust = -0.6, size = 2.6) +
+  scale_x_continuous(breaks = years) +
+  scale_y_continuous(labels = comma) +
+  facet_wrap(~ Genre, ncol = 5) +
+  labs(
+    title = "Unique events per genre by year (counts, 2022–2025)",
+    x = "Year", y = "Events"
+  ) +
+  theme_minimal(base_size = 12)
+
+# Plot 4: bars (same info)
+ggplot(trend_full, aes(x = YearF, y = events, fill = YearF)) +
+  geom_col(width = 0.75) +
+  geom_text(aes(label = comma(events)), vjust = -0.4, size = 2.6) +
+  scale_y_continuous(labels = comma, expand = expansion(mult = c(0, 0.12))) +
+  facet_wrap(~ Genre, ncol = 5) +
+  labs(
+    title = "Unique events per genre by year (counts, 2022–2025)",
+    x = "Year", y = "Events", fill = "Year"
+  ) +
+  theme_minimal(base_size = 12)
+```
+
+Why: This paired visual isolates which genres materially drove programme change between 2022 and 2025 by combining a rate metric (CAGR) with the endpoint counts, so “fast growth” is not misread as “large impact” and structural shifts can be interpreted alongside absolute scale (i.e., a small genre doubling versus a major genre adding hundreds of shows).
+
+Who: Festival programmers and venues use it to prioritise slots and capacity planning; funders and sponsors use it to track where activity is expanding or contracting; and media/research audiences use it to report genre-level change without conflating relative growth with overall festival size.
+
+How: We construct a Year–Genre event series from data_all by filtering to non-blank Year, Genre, and Code, then de-duplicating on (Year, Genre, Code) so each unique event is counted once per genre-year; we count events per (Year, Genre), restrict the display set to prominent genres (e.g., the union of top categories in 2022 and 2025 for readability), and compute a safe CAGR per genre using ((end/start)^(1/3) − 1) only when the 2022 baseline start > 0 (otherwise CAGR is undefined and recorded as NA). We then sort the CAGR bar chart in descending order and pair it with a dumbbell chart showing the absolute endpoint counts for 2022 and 2025 plus the signed Δ (end−start), allowing readers to jointly assess relative growth and real-world magnitude.
+
+```{r, fig.width=16, fig.height=7}
+# ---- params ----
+years <- 2022:2025
+y0 <- min(years)
+y1 <- max(years)
+n_years <- y1 - y0
+
+# ---- event base: one event counts once per (Year, Genre) ----
+ev_by_genre <- data_all %>%
+  transmute(
+    Year  = as.integer(.data[["Year"]]),
+    Genre = stringr::str_squish(as.character(.data[["Genre"]])),
+    Code  = as.character(.data[["Code"]])
+  ) %>%
+  filter(
+    Year %in% years,
+    !is.na(Code),  Code  != "",
+    !is.na(Genre), Genre != ""
+  ) %>%
+  distinct(Year, Genre, Code) %>%
+  count(Year, Genre, name = "events")
+
+# ---- choose genres to show: union of top-10 in first & last year ----
+top_genres <- ev_by_genre %>%
+  filter(Year %in% c(y0, y1)) %>%
+  group_by(Year) %>%
+  slice_max(events, n = 10, with_ties = FALSE) %>%
+  ungroup() %>%
+  distinct(Genre) %>%
+  pull(Genre)
+
+# ---- CAGR helper (safe & readable) ----
+safe_cagr <- function(start, end, years){
+  ifelse(start > 0, (end / start)^(1 / years) - 1, NA_real_)
+}
+
+# ---- build CAGR table (complete missing years first) ----
+gen_cagr <- ev_by_genre %>%
+  filter(Genre %in% top_genres) %>%
+  tidyr::complete(Year = years, Genre, fill = list(events = 0)) %>%
+  group_by(Genre) %>%
+  summarise(
+    start = events[Year == y0],
+    end   = events[Year == y1],
+    cagr  = safe_cagr(start, end, n_years),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    cagr = ifelse(is.infinite(cagr), NA_real_, cagr)
+  )
+
+# order: CAGR desc, then end volume desc (tie-break)
+cagr_order <- gen_cagr %>%
+  arrange(desc(cagr), desc(end), Genre) %>%
+  pull(Genre)
+
+gen_cagr <- gen_cagr %>%
+  mutate(Genre = factor(Genre, levels = cagr_order))
+
+# ---- Plot 1: CAGR bar ----
+ggplot(gen_cagr, aes(x = cagr, y = Genre)) +
+  geom_col() +
+  geom_text(
+    aes(label = scales::percent(cagr, accuracy = 0.1)),
+    hjust = -0.1, size = 3.2, na.rm = TRUE
+  ) +
+  scale_x_continuous(labels = scales::percent, expand = expansion(mult = c(0, 0.12))) +
+  labs(
+    title = "CAGR of unique events by genre (2022→2025)",
+    subtitle = "Genres shown: union of top-10 in 2022 and top-10 in 2025; sorted by CAGR",
+    x = "CAGR", y = "Genre"
+  ) +
+  theme_minimal(base_size = 12)
+
+# ---- build dumbbell table (wide) ----
+g22_25 <- ev_by_genre %>%
+  filter(Genre %in% top_genres, Year %in% c(y0, y1)) %>%
+  tidyr::complete(Year = c(y0, y1), Genre, fill = list(events = 0)) %>%
+  tidyr::pivot_wider(names_from = Year, values_from = events, values_fill = 0) %>%
+  mutate(
+    Genre = factor(Genre, levels = cagr_order),
+    start = .data[[as.character(y0)]],
+    end   = .data[[as.character(y1)]],
+    lbl_start = scales::comma(start),
+    lbl_end   = scales::comma(end),
+    delta     = end - start,
+    lbl_delta = sprintf("%+d", delta)
+  )
+
+xr <- range(c(g22_25$start, g22_25$end), na.rm = TRUE)
+dx <- diff(xr) * 0.015
+
+# ---- Plot 2: 2022 vs 2025 dumbbell ----
+pts <- g22_25 %>%
+  select(Genre, start, end) %>%
+  tidyr::pivot_longer(c(start, end), names_to = "Endpoint", values_to = "Events") %>%
+  mutate(
+    Year = ifelse(Endpoint == "start", y0, y1),
+    Year = factor(Year, levels = c(y0, y1))
+  )
+
+ggplot(g22_25, aes(y = Genre)) +
+  geom_segment(aes(x = start, xend = end, yend = Genre), linewidth = 1) +
+  geom_point(data = pts, aes(x = Events, colour = Year), size = 2) +
+  geom_text(aes(x = start - dx, label = lbl_start), hjust = 1, vjust = 0.5, size = 3) +
+  geom_text(aes(x = end + dx, label = lbl_end), hjust = 0, vjust = 0.5, size = 3) +
+  geom_text(aes(x = (start + end)/2, label = lbl_delta), vjust = -0.3, size = 3.2) +
+  scale_x_continuous(labels = scales::comma, expand = expansion(mult = c(0.02, 0.08))) +
+  labs(
+    title = paste0("Unique events by genre: ", y0, " vs ", y1, " (Top genres)"),
+    subtitle = "Order matches the CAGR chart",
+    x = "Events", y = "Genre", colour = "Year"
+  ) +
+  theme_minimal(base_size = 12)
+```
+
+Why: Show how the typical ticket-price band changes year by year, and distinguish a genuine market-wide shift from changes driven mainly by a small number of high-priced outliers—i.e., whether the median (the “typical” price) moves with the programme or stays stable while the mean drifts due to extremes.
+
+Who: Festival programmers and venues use it to monitor pricing positioning; box office/finance teams use it to benchmark affordability and pricing policy across seasons; and researchers use it as a compact, comparable summary of how accessible the programme looks over time.
+
+How: From data_all we extract Lowest full price, drop missing/blank and non-positive values, then group by Year to compute the 25th percentile (P25), median (P50), 75th percentile (P75), and the mean; we visualise P25–P75 as a ribbon (capturing the middle 50% “typical range” faced by most buyers while downweighting rare extremes), overlay a solid median line, and add a dashed mean line to reveal whether any year’s change reflects broad price movement or skew from a minority of unusually expensive tickets.
+
+```{r}
+years <- 2022:2025
+last_year <- max(years)
+
+prices_year <- data_all %>%
+  transmute(
+    Year  = as.integer(.data[["Year"]]),
+    price = readr::parse_number(stringr::str_trim(as.character(.data[["Lowest full price"]])))
+  ) %>%
+  filter(
+    Year %in% years,
+    !is.na(price), price > 0
+  )
+
+qy <- prices_year %>%
+  group_by(Year) %>%
+  summarise(
+    q25  = quantile(price, 0.25, na.rm = TRUE, type = 7),
+    q50  = quantile(price, 0.50, na.rm = TRUE, type = 7),
+    q75  = quantile(price, 0.75, na.rm = TRUE, type = 7),
+    mean = mean(price, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    lab_med  = scales::number(q50,  accuracy = 0.1),
+    lab_mean = scales::number(mean, accuracy = 0.1)
+  )
+
+# long format for median/mean layers
+qy_long <- qy %>%
+  select(Year, q50, mean, lab_med, lab_mean) %>%
+  tidyr::pivot_longer(
+    cols = c(q50, mean),
+    names_to = "stat",
+    values_to = "value"
+  ) %>%
+  mutate(
+    stat = recode(stat, q50 = "Median", mean = "Mean"),
+    label = ifelse(stat == "Median",
+                   qy$lab_med[match(Year, qy$Year)],
+                   qy$lab_mean[match(Year, qy$Year)])
+  )
+
+ggplot(qy, aes(x = Year)) +
+  geom_ribbon(aes(ymin = q25, ymax = q75), alpha = 0.25) +
+  geom_line(data = qy_long,
+            aes(y = value, linetype = stat, colour = stat),
+            linewidth = 0.9) +
+  geom_point(data = qy_long,
+             aes(y = value, colour = stat),
+             size = 2) +
+  geom_text(data = qy_long,
+            aes(y = value, label = label, colour = stat),
+            vjust = -0.7, size = 3) +
+  scale_x_continuous(breaks = years) +
+  labs(
+    title = "Lowest full price per year (IQR + median & mean)",
+    x = "Year", y = "Price (GBP)",
+    colour = NULL, linetype = NULL
+  ) +
+  coord_cartesian(clip = "off") +
+  theme_minimal(base_size = 12)
+```
+
+Why: This chart tracks how the typical ticket price within each genre changes over time, so we can tell whether overall affordability shifts are driven by a small number of genres moving noticeably or by a more general, programme-wide drift; it complements the yearly price-band plot by separating “between-genre composition” effects from within-genre pricing stability or change.
+
+Who: Festival programmers and venues use it to sense where pricing pressure is rising or easing within specific programme strands; pricing and box-office teams use it to benchmark genre norms year by year; producers use it to position their shows against genre-typical prices; and researchers use it as a compact comparison of price dynamics across content categories.
+
+How: From data_all we extract Lowest full price, keep only valid positive numeric values and non-blank Year/Genre, then group by (Year, Genre) to compute the median price (a robust “typical” measure less sensitive to rare extremes); we display the results as faceted small-multiple line charts with points for each year, enabling quick cross-genre comparison of trends and volatility.
+
+```{r}
+years <- 2022:2025
+
+trend <- data_all %>%
+  transmute(
+    Year  = as.integer(.data[["Year"]]),
+    Genre = stringr::str_squish(as.character(.data[["Genre"]])),
+    price = readr::parse_number(stringr::str_trim(as.character(.data[["Lowest full price"]])))
+  ) %>%
+  filter(
+    Year %in% years,
+    !is.na(Genre), Genre != "",
+    !is.na(price), price > 0
+  ) %>%
+  group_by(Year, Genre) %>%
+  summarise(median_price = median(price, na.rm = TRUE), .groups = "drop")
+
+facet_order <- trend %>%
+  group_by(Genre) %>%
+  summarise(level = median(median_price, na.rm = TRUE), .groups = "drop") %>%
+  arrange(desc(level)) %>%
+  pull(Genre)
+
+trend <- trend %>%
+  mutate(
+    Genre = factor(Genre, levels = facet_order),
+    Year  = factor(Year, levels = years)
+  )
+
+ggplot(trend, aes(x = Year, y = median_price, group = Genre)) +
+  geom_line() +
+  geom_point() +
+  geom_text(
+    aes(label = scales::number(median_price, accuracy = 0.1)),
+    vjust = -0.6, size = 3
+  ) +
+  facet_wrap(~ Genre, ncol = 4) +
+  labs(
+    title = "Median lowest full price by genre (2022–2025)",
+    x = "Year", y = "Median price (GBP)"
+  ) +
+  theme_minimal(base_size = 12)
+```
+
+Why: This chart quantifies how the concession offer rate changes across years, indicating whether discounted ticketing is becoming a routine feature of the programme and providing an evidence base for pricing policy (e.g., whether to normalise concessions, target them to specific segments, or keep them exceptional).
+
+Who: Programmers and box office teams use it to forecast the expected volume of discounted inventory and align it with capacity and revenue targets; marketing teams use it to decide when and where to emphasise affordability messaging; and researchers use it to track how discounting behaviour evolves over time, including post-pandemic recovery effects.
+
+How: From data_all we extract Lowest full price and Lowest concession price, parse both as numeric values, and de-duplicate events by (Year, Code) so each show contributes at most once per year; we then define has_conc = TRUE only when the full price is a valid positive number and a concession price is present satisfying 0 ≤ conc ≤ full, compute the yearly concession rate as offer_rate = mean(has_conc) (with n_events reported as the number of deduplicated events in that year), and plot the result as a year-by-year bar chart without additional trimming, smoothing, or modelling beyond dropping blank/invalid price entries.
+
+```{r}
+years <- 2022:2025
+
+min_pos <- function(x){
+  x <- x[!is.na(x) & x > 0]
+  if (length(x)) min(x) else NA_real_
+}
+min_nonneg <- function(x){
+  x <- x[!is.na(x) & x >= 0]
+  if (length(x)) min(x) else NA_real_
+}
+
+offer_year <- data_all %>%
+  transmute(
+    Year = as.integer(.data[["Year"]]),
+    Code = as.character(.data[["Code"]]),
+    full = readr::parse_number(stringr::str_trim(as.character(.data[["Lowest full price"]]))),
+    conc = readr::parse_number(stringr::str_trim(as.character(.data[["Lowest concession price"]]))),
+    Genre = stringr::str_squish(as.character(.data[["Genre"]]))
+  ) %>%
+  filter(
+    Year %in% years,
+    !is.na(Code), Code != "",
+    !is.na(Genre), Genre != ""
+  ) %>%
+  group_by(Year, Code) %>%
+  summarise(
+    full = min_pos(full),
+    conc = min_nonneg(conc),
+    .groups = "drop"
+  ) %>%
+  mutate(has_conc = !is.na(full) & !is.na(conc) & conc <= full) %>%
+  group_by(Year) %>%
+  summarise(
+    offer_rate = mean(has_conc, na.rm = TRUE),
+    n_events   = n(),
+    .groups = "drop"
+  ) %>%
+  mutate(Year = factor(Year, levels = years))
+
+ggplot(offer_year, aes(x = Year, y = offer_rate)) +
+  geom_col(width = 0.65) +
+  geom_text(aes(label = scales::percent(offer_rate, accuracy = 1)),
+            vjust = -0.4, size = 3.6) +
+  geom_text(aes(y = 0, label = paste0("n = ", scales::comma(n_events))),
+            vjust = 1.5, size = 3.1) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1),
+                     expand = expansion(mult = c(0.02, 0.12))) +
+  labs(title = "Share of events that offer a concession (by year)",
+       x = "Year", y = "Offer rate") +
+  theme_minimal(base_size = 12)
+```
+Why: In the average-discount panel we use the mean discount to capture depth because it aggregates the overall intensity of price cuts across all discounted events; by contrast, a median can remain unchanged even when discounting behaviour becomes more extreme in a subset of shows (e.g., a minority start offering much deeper concessions), which is precisely the type of shift that matters for affordability messaging and revenue planning.
+
+Who: Pricing and box office teams use it to calibrate concession policy, forecast discounted revenue exposure, and benchmark genre norms; researchers use it to compare how discounting practices differ across genres and evolve year to year.
+
+How: From data_all we parse full and concession prices as numeric values, de-duplicate to one record per event by (Year, Code), and define a strict concession flag has_conc_strict when a valid full price exists and a concession price satisfies 0 ≤ conc < full; for discounted events we compute discount = 1 − conc/full and summarise depth as mean(discount) within each (Year, Genre), while adoption is summarised as mean(has_conc_strict) over all events in each (Year, Genre), so the two panels can be read consistently as “share offering a concession” versus “average discount intensity.”
+
+```{r, fig.width=15}
+years <- 2022:2025
+last_y <- max(years)
+
+first_nonblank <- function(x){
+  x <- x[!is.na(x) & stringr::str_trim(x) != ""]
+  if (length(x)) x[1] else NA_character_
+}
+min_pos <- function(x){
+  x <- x[!is.na(x) & x > 0]
+  if (length(x)) min(x) else NA_real_
+}
+min_nonneg <- function(x){
+  x <- x[!is.na(x) & x >= 0]
+  if (length(x)) min(x) else NA_real_
+}
+
+# event-level (Year, Code) with genre + prices
+ev_disc_g <- data_all %>%
+  transmute(
+    Year  = as.integer(.data[["Year"]]),
+    Code  = as.character(.data[["Code"]]),
+    Genre = stringr::str_squish(as.character(.data[["Genre"]])),
+    full  = readr::parse_number(stringr::str_trim(as.character(.data[["Lowest full price"]]))),
+    conc  = readr::parse_number(stringr::str_trim(as.character(.data[["Lowest concession price"]])))
+  ) %>%
+  filter(
+    Year %in% years,
+    !is.na(Code), Code != "",
+    !is.na(Genre), Genre != ""
+  ) %>%
+  group_by(Year, Code) %>%
+  summarise(
+    Genre = first_nonblank(Genre),
+    full  = min_pos(full),
+    conc  = min_nonneg(conc),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    has_conc_strict = !is.na(full) & full > 0 & !is.na(conc) & conc >= 0 & conc < full,
+    discount        = dplyr::if_else(has_conc_strict, 1 - conc / full, NA_real_)
+  )
+
+# offer rate (by year & genre)
+offer_rate <- ev_disc_g %>%
+  group_by(Year, Genre) %>%
+  summarise(
+    n_events   = n(),
+    offer_rate = if (all(is.na(has_conc_strict))) NA_real_ else mean(has_conc_strict, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# average discount depth (conditional on offering a concession)
+depth_mean <- ev_disc_g %>%
+  filter(has_conc_strict) %>%
+  group_by(Year, Genre) %>%
+  summarise(
+    mean_disc = if (all(is.na(discount))) NA_real_ else mean(discount, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# consistent ordering (by last-year offer rate, fallback to overall average)
+ordering <- offer_rate %>%
+  filter(Year == last_y) %>%
+  arrange(desc(offer_rate)) %>%
+  pull(Genre) %>%
+  unique()
+
+if (!length(ordering)) {
+  ordering <- offer_rate %>%
+    group_by(Genre) %>%
+    summarise(avg = mean(offer_rate, na.rm = TRUE), .groups = "drop") %>%
+    arrange(desc(avg)) %>%
+    pull(Genre)
+}
+
+long <- dplyr::bind_rows(
+  offer_rate %>% transmute(Year, Genre, metric = "Offer rate",       value = offer_rate),
+  depth_mean %>% transmute(Year, Genre, metric = "Average discount", value = mean_disc)
+) %>%
+  tidyr::complete(
+    Year = years,
+    Genre = ordering,
+    metric = c("Offer rate", "Average discount")
+  ) %>%
+  mutate(
+    Year   = factor(Year, levels = years),
+    Genre  = factor(Genre, levels = ordering),
+    metric = factor(metric, levels = c("Offer rate", "Average discount"))
+  )
+
+ggplot(long, aes(x = Genre, y = value)) +
+  geom_col(width = 0.6, na.rm = TRUE) +
+  geom_text(
+    aes(label = scales::percent(value, accuracy = 1)),
+    hjust = -0.05, size = 2.8, na.rm = TRUE
+  ) +
+  coord_flip(clip = "off") +
+  facet_grid(metric ~ Year) +
+  scale_y_continuous(
+    labels = scales::percent,
+    limits = c(0, 1),
+    expand = expansion(mult = c(0, 0.12))
+  ) +
+  labs(
+    title = "Concessions by genre and year",
+    subtitle = "Offer rate = share of events with conc < full; average discount computed among events offering a concession",
+    x = "Genre", y = "Rate"
+  ) +
+  theme_minimal(base_size = 12)
+```
+
+Why: Because ticket sales are executed through individual venue websites, concession decisions are often implemented at the venue level; comparing venues’ concession coverage therefore reveals which venues systematically use discounts as part of their pricing strategy and whether that behaviour has shifted between 2022 and 2025.
+
+Who: Festival organisers and venue managers can benchmark concession policy against comparable venues and identify outliers; ticketing and marketing teams can target partnership or affordability messaging toward venues with consistently high (or changing) concession coverage; researchers can use it as evidence of heterogeneity in discount adoption across the venue network.
+
+How: From the deduplicated event table (one record per (Year, Code) with a stable Venue code), we compute each venue-year offer rate as the share of events where a valid concession price is strictly below the full price, select the top 10 venues by total event volume across 2022–2025, fix the venue ordering by overall event count for comparability, and plot faceted year panels as horizontal bar charts with percentage labels (and consistent axes) to enable direct cross-year and cross-venue comparison.
+
+```{r, fig.width=16, fig.height=5, out.width='100%'}
+years <- 2022:2025
+top_k <- 10
+
+first_nonblank <- function(x){
+  x <- x[!is.na(x) & stringr::str_trim(x) != "" & !x %in% c("NA", "N/A")]
+  if (length(x)) x[1] else NA_character_
+}
+min_pos <- function(x){
+  x <- x[!is.na(x) & x > 0]
+  if (length(x)) min(x) else NA_real_
+}
+min_nonneg <- function(x){
+  x <- x[!is.na(x) & x >= 0]
+  if (length(x)) min(x) else NA_real_
+}
+
+ev_venue <- data_all %>%
+  transmute(
+    Year  = as.integer(.data[["Year"]]),
+    Code  = as.character(.data[["Code"]]),
+    Venue = stringr::str_squish(as.character(.data[["Venue"]])),
+    VCode = stringr::str_squish(as.character(.data[["Venue code"]])),
+    full  = readr::parse_number(stringr::str_trim(as.character(.data[["Lowest full price"]]))),
+    conc  = readr::parse_number(stringr::str_trim(as.character(.data[["Lowest concession price"]])))
+  ) %>%
+  filter(
+    Year %in% years,
+    !is.na(Code), Code != "",
+    !is.na(VCode), VCode != "",
+    !is.na(Venue), Venue != "", !Venue %in% c("NA","N/A")
+  ) %>%
+  group_by(Year, Code) %>%
+  summarise(
+    Venue = first_nonblank(Venue),
+    VCode = first_nonblank(VCode),
+    full  = min_pos(full),
+    conc  = min_nonneg(conc),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    has_conc = !is.na(full) & full > 0 & !is.na(conc) & conc >= 0 & conc < full
+  )
+
+# Top venues by total unique events across all years (after (Year, Code) dedupe)
+top_venues <- ev_venue %>%
+  count(VCode, Venue, name = "events") %>%
+  arrange(desc(events), VCode) %>%
+  slice_head(n = top_k) %>%
+  pull(VCode)
+
+venue_offer <- ev_venue %>%
+  filter(VCode %in% top_venues) %>%
+  group_by(Year, VCode, Venue) %>%
+  summarise(
+    n_events   = n(),
+    offer_rate = mean(dplyr::coalesce(has_conc, FALSE)),
+    .groups = "drop"
+  )
+
+order_venues <- venue_offer %>%
+  group_by(Venue) %>%
+  summarise(total = sum(n_events), .groups = "drop") %>%
+  arrange(desc(total)) %>%
+  pull(Venue)
+
+plot_df <- venue_offer %>%
+  mutate(
+    Year  = factor(Year, levels = years),
+    Venue = factor(Venue, levels = rev(order_venues))
+  )
+
+ggplot(plot_df, aes(x = offer_rate, y = Venue)) +
+  geom_col(width = 0.6) +
+  geom_text(aes(label = scales::percent(offer_rate, accuracy = 1)),
+            hjust = -0.06, size = 2.8) +
+  facet_wrap(~ Year, nrow = 1) +
+  scale_x_continuous(
+    labels = scales::percent, limits = c(0, 1),
+    expand = expansion(mult = c(0, 0.10))
+  ) +
+  labs(
+    title = "Top 10 venues: concession offer rate (2022–2025)",
+    subtitle = "Offer rate = share of events with a valid concession price strictly below full price",
+    x = "Offer rate", y = "Venue"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "none")
+```
+What: A venue-by-genre heatmap for 2025 where each cell represents a genre inside a specific top venue, the colour encodes the concession offer rate (share of events with a valid concession price below the full price), and the cell label shows the percentage when that venue-genre has events (blank/grey cells indicate no events in that venue-genre).
+
+Why: A heatmap is the most web-friendly way to compare a two-dimensional pattern (Venue × Genre) at a glance: it surfaces which venues systematically discount more, which genres are discounted within those venues, and where discounting is absent, without the clutter and scrolling burden of many small bar charts—making it easier to spot “hot spots”, gaps, and venue-specific pricing strategies for planning and communication.
+
+How: From data_all we filter to 2025, keep non-blank Code and Genre, de-duplicate to one record per (Year, Code, Genre) so each event counts once in its genre, and join to the de-duplicated venue-level event table (one record per (Year, Code) with Venue code, Venue, and a concession flag); we define an event as offering a concession when the parsed prices satisfy full > 0 and 0 ≤ conc < full, compute the offer rate within each (Venue, Genre) as mean(has_conc), complete the Venue×Genre grid to explicitly mark missing combinations as “no events”, and then plot offer_rate on a 0–1 scale using geom_tile (with NA shown as grey) plus percent labels for populated cells.
+
+```{r, fig.width=16, fig.height=5, out.width='100%'}
+ev_venue_g25 <- data_all %>%
+  transmute(
+    Year  = as.integer(.data[["Year"]]),
+    Code  = as.character(.data[["Code"]]),
+    Genre = stringr::str_squish(as.character(.data[["Genre"]]))
+  ) %>%
+  filter(Year == 2025, !is.na(Code), Code != "", !is.na(Genre), Genre != "") %>%
+  distinct(Year, Code, Genre) %>%
+  inner_join(
+    ev_venue %>%
+      filter(Year == 2025, VCode %in% top_venues) %>%
+      select(Year, Code, Venue, VCode, has_conc),
+    by = c("Year", "Code")
+  )
+
+cnt_rate <- ev_venue_g25 %>%
+  group_by(Venue, Genre) %>%
+  summarise(
+    n_events = n(),
+    offer_rate = mean(dplyr::coalesce(has_conc, FALSE)),
+    .groups = "drop"
+  )
+
+# order venues by total volume (within top venues, 2025)
+v_order <- ev_venue_g25 %>%
+  count(Venue, name = "tot_events") %>%
+  arrange(desc(tot_events), Venue) %>%
+  pull(Venue)
+
+# order genres by total volume (within top venues, 2025)
+g_order <- ev_venue_g25 %>%
+  count(Genre, name = "tot_events") %>%
+  arrange(desc(tot_events), Genre) %>%
+  pull(Genre)
+
+plot_df <- tidyr::expand_grid(Venue = v_order, Genre = g_order) %>%
+  left_join(cnt_rate, by = c("Venue", "Genre")) %>%
+  mutate(
+    n_events   = tidyr::replace_na(n_events, 0L),
+    offer_rate = ifelse(n_events > 0, offer_rate, NA_real_),  # NA = no events
+    label      = ifelse(n_events > 0, scales::percent(offer_rate, accuracy = 1), ""),
+    Venue      = factor(Venue, levels = v_order),
+    Genre      = factor(Genre, levels = rev(g_order))
+  )
+
+# heatmap
+ggplot(plot_df, aes(x = 1, y = Genre, fill = offer_rate)) +
+  geom_tile(width = 0.95, height = 0.95, colour = "white", linewidth = 0.3) +
+  geom_text(aes(label = label), size = 2.6) +
+  facet_wrap(~ Venue, nrow = 2) +
+  scale_fill_gradient(
+    limits = c(0, 1),
+    labels = scales::percent,
+    na.value = "grey90",
+    name = "Offer rate"
+  ) +
+  labs(
+    title = "Concession offer rate by genre within top venues (2025)",
+    subtitle = "Grey = no events in that venue-genre; numbers show offer rate among events",
+    x = NULL, y = NULL
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank(),
+    panel.grid = element_blank(),
+    strip.text = element_text(face = "bold"),
+    legend.position = "right"
+  )
+```
+What: A faceted venue-by-genre bar chart for 2025 showing average concession discount depth within each of the top venues; each bar represents a genre inside a venue, the bar length is the mean discount rate among discounted events ( 1-\text{conc}/\text{full} ), and categories are explicitly separated into “Has discount”, “No discount”, and “No events” so viewers can distinguish zero coverage from missing programming.
+
+Why: Discounting has two distinct dimensions—adoption (whether concessions are offered at all) and depth (how large the price cut is when offered); this chart focuses on depth so you can see which venue–genre combinations rely on shallow vs deep concessions, helping venues and festival teams benchmark pricing strategy, anticipate revenue exposure, and design affordability messaging without confusing “rare discounts” with “small discounts.”
+
+How: Starting from deduplicated event records (one per Year–Code), we parse full and concession prices to numeric values, flag a strict concession when full > 0 and 0 ≤ conc < full, compute discount = 1 − conc/full for discounted events, then summarise by (Venue, Genre) with n_events, n_offers, and mean_disc = mean(discount) computed only among events that offer a concession; finally, we complete missing venue–genre combinations to label “No events”, set a consistent venue/genre ordering for readability, and plot faceted bars with percent labels for discounted cells.
+
+```{r, fig.width=16, fig.height=5, out.width='100%'}
+years <- 2022:2025
+year_h <- 2025
+
+plot_dat <- ev_venue_g25 %>%
+  # full/conc
+  dplyr::inner_join(
+    ev_venue %>%
+      dplyr::filter(Year == year_h, VCode %in% top_venues) %>%
+      dplyr::select(Year, Code, Venue, VCode, full, conc),
+    by = c("Year","Code","Venue")
+  ) %>%
+  dplyr::mutate(
+    has_offer = !is.na(full) & full > 0 & !is.na(conc) & conc >= 0 & conc < full,
+    discount  = dplyr::if_else(has_offer, 1 - conc/full, NA_real_)
+  ) %>%
+  dplyr::group_by(Venue, Genre) %>%
+  dplyr::summarise(
+    n_events  = dplyr::n(),
+    n_offers  = sum(dplyr::coalesce(has_offer, FALSE)),
+    mean_disc = mean(discount, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+v_order <- plot_dat %>%
+  dplyr::group_by(Venue) %>%
+  dplyr::summarise(t = sum(n_offers), .groups = "drop") %>%
+  dplyr::arrange(desc(t), Venue) %>%
+  dplyr::pull(Venue)
+
+g_order <- plot_dat %>%
+  dplyr::group_by(Genre) %>%
+  dplyr::summarise(t = sum(n_events), .groups = "drop") %>%
+  dplyr::arrange(desc(t), Genre) %>%
+  dplyr::pull(Genre)
+
+# 3) 补齐缺失组合 + 生成 value/status/label
+plot_dat <- plot_dat %>%
+  tidyr::complete(Venue = v_order, Genre = g_order) %>%
+  dplyr::mutate(
+    n_events = tidyr::replace_na(n_events, 0L),
+    n_offers = tidyr::replace_na(n_offers, 0L),
+    value = dplyr::case_when(
+      n_events == 0 ~ NA_real_,
+      n_offers == 0 ~ 0,
+      TRUE          ~ mean_disc
+    ),
+    status = dplyr::case_when(
+      n_events == 0 ~ "No events",
+      n_offers == 0 ~ "No discount",
+      TRUE          ~ "Has discount"
+    ),
+    label = dplyr::if_else(n_offers > 0, scales::percent(value, accuracy = 1), ""),
+    Venue = factor(Venue, levels = v_order),
+    Genre = factor(Genre, levels = rev(g_order)),
+    status = factor(status, levels = c("Has discount","No discount","No events"))
+  )
+
+# 4) 画图（bar + facet）
+ggplot(plot_dat, aes(x = value, y = Genre, fill = status)) +
+  geom_col(width = 0.6, na.rm = TRUE) +
+  geom_text(aes(label = label), hjust = -0.06, size = 2.8, na.rm = TRUE) +
+  facet_wrap(~ Venue, nrow = 2) +
+  scale_x_continuous(labels = scales::percent, limits = c(0, 1),
+                     expand = expansion(mult = c(0, 0.10))) +
+  scale_fill_manual(values = c(
+    "Has discount" = "red",
+    "No discount"  = "grey",
+    "No events"    = "lightgrey"
+  ), name = NULL) +
+  labs(
+    title = "Average concession discount by genre within each venue (2025)",
+    x = "Average discount among offers", y = "Genre"
+  ) +
+  coord_cartesian(clip = "off") +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "top",
+        panel.grid.major.y = element_blank())
+```
+What: Two faceted venue-level charts for 2025 that summarise concession behaviour by audience age band within the top venues: panel A shows the offer rate (share of events in each age category that provide a concession), and panel B shows the average discount depth (mean percentage reduction 1-\text{conc}/\text{full}) conditional on a concession being offered, with each venue displayed as a small multiple for side-by-side benchmarking.
+
+Why: Age categories proxy target audiences and demand sensitivity, so splitting concessions by age helps distinguish whether venues use discounts mainly to support family/young audiences versus applying them broadly; separating adoption (offer rate) from depth (how large the discount is when offered) avoids misleading conclusions where a venue may discount rarely but very deeply, or discount frequently but only slightly, which matters for pricing policy, accessibility goals, and marketing messages.
+
+How: From data_all we keep 2025 records with valid Code and one of the eight standard Age category levels, de-duplicate to one record per (Year, Code), join to the de-duplicated top-venue event table, and define a strict concession when full > 0 and 0 ≤ conc < full; we compute offer_rate = mean(has_offer) within each (Venue, Age) over all events and compute mean_disc = mean(1 − conc/full) only among events with a concession, then complete missing venue–age combinations to mark “No events” and “No discount” explicitly and plot per-venue facets with consistent 0–1 percentage scales.
+
+```{r, fig.width=16, fig.height=5, out.width='100%' }
+age_levels <- c("0+","3+","5+","8+","12+","14+","16+","18+")
+
+ev_age25 <- data_all %>%
+  transmute(
+    Year = as.integer(.data[["Year"]]),
+    Code = as.character(.data[["Code"]]),
+    Age  = stringr::str_squish(as.character(.data[["Age category"]]))
+  ) %>%
+  filter(
+    Year == 2025,
+    !is.na(Code), Code != "",
+    !is.na(Age),  Age %in% age_levels
+  ) %>%
+  distinct(Year, Code, .keep_all = TRUE)
+
+ev_venue25 <- ev_venue %>%
+  filter(Year == 2025, VCode %in% top_venues)
+
+va25 <- ev_venue25 %>%
+  inner_join(ev_age25, by = c("Year","Code")) %>%
+  mutate(
+    has_offer = !is.na(full) & full > 0 & !is.na(conc) & conc >= 0 & conc < full,
+    discount  = dplyr::if_else(has_offer, 1 - conc/full, NA_real_)
+  ) %>%
+  group_by(Venue, Age) %>%
+  summarise(
+    n_events   = n(),
+    n_offers   = sum(dplyr::coalesce(has_offer, FALSE)),
+    offer_rate = mean(dplyr::coalesce(has_offer, FALSE)),
+    mean_disc  = if_else(n_offers > 0, mean(discount, na.rm = TRUE), NA_real_),
+    .groups = "drop"
+  )
+
+# Venue  Age 
+v_order <- ev_venue25 %>%
+  count(Venue, name = "tot_events") %>%
+  arrange(desc(tot_events), Venue) %>%
+  pull(Venue)
+
+base <- tidyr::expand_grid(
+  Venue = v_order,
+  Age   = age_levels
+) %>%
+  left_join(va25, by = c("Venue","Age")) %>%
+  mutate(
+    n_events   = tidyr::replace_na(n_events, 0L),
+    n_offers   = tidyr::replace_na(n_offers, 0L),
+    offer_rate = if_else(n_events > 0, offer_rate, NA_real_),  # NA = No events
+    mean_disc  = if_else(n_offers > 0, mean_disc, if_else(n_events > 0, 0, NA_real_)),
+    bg_status  = dplyr::case_when(                           # 只给“缺失/无折扣”上背景
+      n_events == 0 ~ "No events",
+      n_offers == 0 ~ "No discount",
+      TRUE          ~ NA_character_
+    ),
+    Venue = factor(Venue, levels = v_order),
+    Age   = factor(Age, levels = rev(age_levels)),
+    bg_status = factor(bg_status, levels = c("No events","No discount"))
+  )
+
+# Offer rate
+ggplot(base, aes(y = Age)) +
+  geom_col(aes(x = 1, fill = bg_status), width = 0.60, alpha = 0.35, na.rm = TRUE) +
+  geom_col(aes(x = offer_rate), width = 0.46, show.legend = FALSE, na.rm = TRUE) +
+  geom_text(aes(x = offer_rate, label = scales::percent(offer_rate, accuracy = 1)),
+            hjust = -0.06, size = 2.7, na.rm = TRUE) +
+  facet_wrap(~ Venue, nrow = 2) +
+  scale_x_continuous(labels = scales::percent, limits = c(0, 1),
+                     expand = expansion(mult = c(0, 0.10))) +
+  scale_fill_manual(values = c("No events"="grey95", "No discount"="grey70"),
+                    name = NULL) +
+  labs(title = "Offer rate by age within each venue (2025)",
+       x = "Offer rate", y = "Age") +
+  coord_cartesian(clip = "off") +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "top", panel.grid.major.y = element_blank())
+
+# Average discount depth
+ggplot(base, aes(y = Age)) +
+  geom_col(aes(x = 1, fill = bg_status), width = 0.60, alpha = 0.35, na.rm = TRUE) +
+  geom_col(aes(x = mean_disc), width = 0.46, show.legend = FALSE, na.rm = TRUE) +
+  geom_text(
+    aes(x = mean_disc, label = if_else(n_offers > 0, scales::percent(mean_disc, accuracy = 1), "")),
+    hjust = -0.06, size = 2.7, na.rm = TRUE
+  ) +
+  facet_wrap(~ Venue, nrow = 2) +
+  scale_x_continuous(labels = scales::percent, limits = c(0, 1),
+                     expand = expansion(mult = c(0, 0.10))) +
+  scale_fill_manual(values = c("No events"="grey95", "No discount"="grey70"),
+                    name = NULL) +
+  labs(title = "Average discount depth by age within each venue (2025)",
+       subtitle = "Average discount is computed only among events that offer a concession",
+       x = "Average discount among offers", y = "Age") +
+  coord_cartesian(clip = "off") +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "top", panel.grid.major.y = element_blank())
+```
+
+Why: Show the festival’s overall activity level each year by totalling how many performances actually ran.
+
+Who: Festival management and ops teams (capacity planning), venues (expected footfall), and analysts tracking year-to-year recovery or expansion. 
+
+How: Use Year, Code, and Performances #; keep valid rows, parse Performances # to numbers, de-duplicate to one record per Year+Code by taking the maximum performance count seen for that event, treat infinities as missing, drop non-positive counts, then sum performances within each year.
+
+```{r}
+ev_perf <- data_all %>%
+  transmute(
+    Year = as.integer(.data[["Year"]]),
+    Code = as.character(.data[["Code"]]),
+    perf = readr::parse_number(as.character(.data[["Performances #"]]))
+  ) %>%
+  filter(!is.na(Year), !is.na(Code), Code != "") %>%
+  group_by(Year, Code) %>%
+  summarise(perf = suppressWarnings(max(perf, na.rm = TRUE)), .groups = "drop") %>%
+  mutate(perf = ifelse(is.infinite(perf), NA_real_, perf))
+
+year_totals <- ev_perf %>%
+  filter(!is.na(perf), perf > 0) %>%                
+  group_by(Year) %>%
+  summarise(
+    total_performances = sum(perf),                  
+    .groups = "drop"
+  ) %>% arrange(Year)
+
+
+ggplot(year_totals, aes(Year, total_performances, group = 1)) +
+  geom_line(linewidth = 0.9) +
+  geom_point(size = 2) +
+  geom_text(aes(label = comma(total_performances)), vjust = -0.6, size = 3.4) +
+  labs(
+    title = "Total performances per year (sum of event-level counts)",
+    x = "Year", y = "Total performances"
+  ) +
+  theme_minimal(base_size = 12)
+
+# bar chart
+ggplot(year_totals, aes(x = factor(Year), y = total_performances)) +
+  geom_col(width = 0.65) +
+  geom_text(aes(label = scales::comma(total_performances)),
+            vjust = -0.4, size = 3.4) +
+  scale_y_continuous(labels = scales::comma,
+                     expand = expansion(mult = c(0, 0.12))) +
+  labs(
+    title = "Total performances per year (sum of event-level counts)",
+    x = "Year", y = "Total performances"
+  ) +
+  theme_minimal(base_size = 12)
+```
+Why: Show when openings cluster across the festival and which genres drive each weekly wave, so scheduling, staffing, and promo timing can focus on the busiest moments. 
+
+Who: Festival planners, box office/FOH leads, and genre-area marketers who need a clear week-by-week/weekday pattern. 
+
+How: Using Year, Code, Genre, and First performance date, we dedupe to one row per event (Year+Code) and drop blanks; for 2025 we take each event’s earliest first date, set start_day to the minimum and a 28-day window (week = 1–4), count unique openings by (week, Genre), keep the top 8 genres and collapse others to “Other,” then convert counts to shares; for the weekday view we again use one first date per event, derive weekday (Mon–Sun), count by (Year, weekday), and divide by the yearly total to get shares—preventing double-counts while keeping the patterns directly comparable.
+
+```{r}
+YEAR <- 2025
+top_n <- 8
+wk_levels <- c("Mon","Tue","Wed","Thu","Fri","Sat","Sun")
+
+open_2025 <- data_all %>%
+  transmute(
+    Year  = as.integer(.data[["Year"]]),
+    Code  = as.character(.data[["Code"]]),
+    Genre = as.character(.data[["Genre"]]),
+    first = as.Date(.data[["First performance date"]], format = "%Y-%m-%d")
+  ) %>%
+  filter(Year == YEAR, !is.na(Code), Code != "", !is.na(first)) %>%
+  group_by(Code) %>%
+  summarise(
+    first = min(first, na.rm = TRUE),
+    Genre = {x <- Genre[!is.na(Genre) & Genre != ""]; if (length(x)) x[1] else NA_character_},
+    .groups = "drop"
+  )
+
+start_day <- min(open_2025$first, na.rm = TRUE)
+end_day   <- start_day + 27 
+
+wk_genre <- open_2025 %>%
+  filter(first >= start_day, first <= end_day, !is.na(Genre), Genre != "") %>%
+  mutate(week = floor(as.numeric(first - start_day) / 7) + 1) %>%
+  count(week, Genre, name = "opens")
+
+top_gen <- wk_genre %>%
+  group_by(Genre) %>% summarise(T = sum(opens), .groups = "drop") %>%
+  slice_max(T, n = top_n) %>% pull(Genre)
+
+wk_plot <- wk_genre %>%
+  mutate(Genre = ifelse(Genre %in% top_gen, Genre, "Other")) %>%
+  group_by(week, Genre) %>% summarise(opens = sum(opens), .groups = "drop")
+
+lvl <- wk_plot %>%
+  group_by(Genre) %>% summarise(T = sum(opens), .groups = "drop") %>%
+  arrange(desc(T)) %>% pull(Genre)
+wk_plot <- wk_plot %>% mutate(Genre = factor(Genre, levels = lvl))
+
+cols <- setNames(scales::hue_pal()(length(lvl)), lvl)
+
+open_one_per_event <- data_all %>%
+  transmute(
+    Year  = as.integer(.data[["Year"]]),
+    Code  = as.character(.data[["Code"]]),
+    first = as.Date(.data[["First performance date"]], format = "%Y-%m-%d")
+  ) %>%
+  filter(!is.na(Year), Code != "", !is.na(first)) %>%
+  group_by(Year, Code) %>%
+  summarise(first = min(first, na.rm = TRUE), .groups = "drop")
+
+wkday_share <- open_one_per_event %>%
+  mutate(weekday = factor(wk_levels[as.integer(strftime(first, "%u"))],
+                          levels = wk_levels, ordered = TRUE)) %>%
+  count(Year, weekday, name = "opens") %>%
+  group_by(Year) %>%
+  mutate(total = sum(opens), share = opens / total) %>%
+  ungroup()
+
+year_tot <- wkday_share %>% distinct(Year, total)
+#1.
+wk_share_week <- wk_plot %>%
+  group_by(week) %>%
+  mutate(share = opens / sum(opens)) %>%
+  ungroup()
+
+ggplot(wk_share_week, aes(x = factor(week), y = share, fill = Genre)) +
+  geom_col(width = 0.72) +
+  geom_text(
+    aes(label = scales::percent(share, accuracy = 1)),
+    position = position_stack(vjust = 0.5),
+    color = "white", size = 2.2
+  ) +
+  scale_fill_manual(values = cols) +
+  scale_y_continuous(labels = scales::percent) +
+  labs(
+    title = paste0("First-day openings — share by week × genre (",
+                   format(start_day, "%Y-%m-%d"), " to ", format(end_day, "%m-%d"), ")"),
+    x = "Week number (from first opening day)",
+    y = "Share within week",
+    fill = "Genre"
+  ) +
+  theme_minimal(base_size = 12)
+
+#2.
+ggplot(wkday_share, aes(x = factor(Year), y = share, fill = weekday)) +
+  geom_col(width = 0.75) +
+  geom_text(
+    aes(label = scales::percent(share, accuracy = 1)),
+    position = position_stack(vjust = 0.5),
+    color = "white", size = 2.2
+  ) +
+  geom_text(
+    data = year_tot,
+    aes(x = factor(Year), y = 1.05, label = paste0("n = ", total)),
+    inherit.aes = FALSE, size = 3
+  ) +
+  scale_fill_brewer(palette = "Set2") +
+  scale_y_continuous(labels = scales::percent, expand = expansion(mult = c(0, 0.10))) +
+  coord_cartesian(clip = "off") +
+  labs(
+    title = "First-day openings — share by weekday (by year)",
+    x = "Year",
+    y = "Share within year",
+    fill = "Weekday"
+  ) +
+  theme_minimal(base_size = 12)
+
+```
+
+What: A faceted bar chart showing the median lowest full ticket price for each age category within each genre, for 2022–2025 (Top 10 genres).
+
+Why: Bars make it easy to compare typical prices across age groups without statistical jargon—so you can quickly see whether “adult” categories tend to sit higher than “family” categories inside the same genre, and whether that pattern changes year to year.
+
+How: We keep 2022–2025 rows with valid Code, Genre, a standard Age category, and a positive numeric Lowest full price, de-duplicate to one row per (Year, Code), compute the median price within each (Year, Genre, Age), order genres by their 2025 typical level for readability, and plot side-by-side bars (dodged) with light value labels.
+
+```{r, fig.width=14, fig.height=14}
+years <- 2022:2025
+age_levels <- c("0+","3+","5+","8+","12+","14+","16+","18+")
+
+# 1) event-level base (one row per Year&Code)
+age_genre_price <- data_all %>%
+  dplyr::transmute(
+    Year  = as.integer(.data[["Year"]]),
+    Code  = as.character(.data[["Code"]]),
+    Genre = stringr::str_squish(as.character(.data[["Genre"]])),
+    Age   = stringr::str_squish(as.character(.data[["Age category"]])),
+    full  = readr::parse_number(stringr::str_trim(as.character(.data[["Lowest full price"]])))
+  ) %>%
+  dplyr::filter(
+    Year %in% years,
+    !is.na(Code), Code != "",
+    !is.na(Genre), Genre != "",
+    !is.na(Age), Age %in% age_levels,
+    !is.na(full), full > 0
+  ) %>%
+  dplyr::group_by(Year, Code) %>%
+  dplyr::summarise(
+    Genre = Genre[which(!is.na(Genre) & Genre != "")][1],
+    Age   = Age[which(!is.na(Age) & Age != "")][1],
+    full  = dplyr::first(full[!is.na(full) & full > 0], default = NA_real_),
+    .groups = "drop"
+  ) %>%
+  dplyr::mutate(
+    Year = factor(Year, levels = years),
+    Age  = factor(Age, levels = age_levels)
+  )
+
+# 2) top 10 genres by volume (across years)
+top_genres <- age_genre_price %>%
+  dplyr::count(Genre, name = "n") %>%
+  dplyr::slice_max(n, n = 10) %>%
+  dplyr::pull(Genre)
+
+# 3) Year × Genre × Age median price
+med_yga <- age_genre_price %>%
+  dplyr::filter(Genre %in% top_genres) %>%
+  dplyr::group_by(Year, Genre, Age) %>%
+  dplyr::summarise(median_full = median(full), .groups = "drop")
+
+# 4) order genres by 2025 overall median (so panels read top-to-bottom consistently)
+genre_levels <- med_yga %>%
+  dplyr::filter(Year == "2025") %>%
+  dplyr::group_by(Genre) %>%
+  dplyr::summarise(m = median(median_full), .groups = "drop") %>%
+  dplyr::arrange(desc(m), Genre) %>%
+  dplyr::pull(Genre)
+
+plot_dat <- med_yga %>%
+  dplyr::mutate(
+    Genre = factor(Genre, levels = rev(genre_levels)),
+    lbl   = dplyr::if_else(!is.na(median_full) & median_full >= 3,
+                           sprintf("%.1f", median_full), "")
+  )
+
+pd <- position_dodge(width = 0.78)
+
+ggplot(plot_dat, aes(x = median_full, y = Genre, fill = Age)) +
+  geom_col(position = pd, width = 0.72, na.rm = TRUE) +
+  geom_text(aes(label = lbl), position = pd,
+            hjust = -0.08, size = 2.4, na.rm = TRUE) +
+  facet_wrap(~ Year, nrow = 2) +
+  scale_x_continuous(labels = scales::number_format(accuracy = 1),
+                     expand = expansion(mult = c(0, 0.15))) +
+  labs(
+    title = "Median lowest full price by age within genre (Top 10 genres)",
+    subtitle = "Bars are medians of event-level lowest full prices; compare age bands within each genre",
+    x = "Median price (GBP)", y = "Genre", fill = "Age"
+  ) +
+  coord_cartesian(clip = "off") +
+  theme_minimal(base_size = 12) +
+  theme(
+    panel.grid.major.y = element_blank(),
+    strip.text = element_text(face = "bold"),
+    legend.position = "right"
+  )
+```
+Why: Surface the most common themes and amenities mentioned by venues in 2025 so readers quickly see what venues emphasize.
+
+Who: Festival goers scanning for venue features, marketing/content teams refining venue copy, and researchers comparing venue messaging across sites. 
+
+How: Keep one description per venue per year (deduplicate by Venue code), drop blanks, lowercase text, strip punctuation, split on spaces, remove short tokens (<3 chars) and a small English stop-word list, then count token frequencies and plot the top 20 as a sorted horizontal bar chart using Year, Venue code, and Venue description columns.
+
+```{r}
+YEAR <- 2025
+stop_words <- c("the","a","an","and","or","of","to","in","on","for","with","at","by",
+                "is","are","be","this","that","from","it","as","we","you","they","our",
+                "your","their","near","within","into","also","will")
+
+first_nonblank <- function(x){
+  x <- x[!is.na(x) & stringr::str_trim(x) != ""]
+  if (length(x)) x[1] else NA_character_
+}
+
+words <- data_all %>%
+  dplyr::transmute(
+    Year      = as.integer(.data[["Year"]]),
+    Venue_code= as.character(.data[["Venue code"]]),
+    txt       = as.character(.data[["Venue description"]])
+  ) %>%
+  dplyr::filter(Year == YEAR, !is.na(Venue_code), Venue_code != "") %>%
+  dplyr::group_by(Venue_code) %>%
+  dplyr::summarise(txt = first_nonblank(txt), .groups = "drop") %>%
+  dplyr::filter(!is.na(txt), stringr::str_trim(txt) != "") %>%
+  dplyr::mutate(
+    txt = stringr::str_to_lower(txt),
+    txt = stringr::str_replace_all(txt, "[^a-z\\s]", " "),
+    txt = stringr::str_squish(txt)
+  ) %>%
+  tidyr::separate_rows(txt, sep = "\\s+") %>%
+  dplyr::rename(tokens = txt) %>%
+  dplyr::filter(!tokens %in% stop_words, nchar(tokens) >= 3) %>%
+  dplyr::count(tokens, sort = TRUE) %>%
+  dplyr::slice_head(n = 20)
+
+ggplot(words, aes(x = reorder(tokens, n), y = n)) +
+  geom_col() +
+  coord_flip() +
+  labs(
+    title = paste0("Top words in venue descriptions (", YEAR, ")"),
+    x = "Word", y = "Count"
+  ) +
+  theme_minimal(base_size = 12)
+```
+What: This bar chart shows the top 15 postcode sectors (e.g. EH1, EH10) and how many unique venues fall in each sector for YEAR = 2025.
+
+Why: Venue location is a key part of planning (maps, walking routes, clustering around the city centre), and postcode sectors give a simple, consistent way to summarise where venues concentrate without needing full geocoding.
+
+How: From data_all we filter to 2025, keep one row per Venue_code (so each venue is counted once), take the first non-blank Venue postcode, extract the outward-code sector using a regex (EH1 2AB → EH1, EH10 4XX → EH10), count venues per sector, keep the top 15, and plot a horizontal bar chart of the counts.
+
+```{r}
+YEAR <- 2025
+
+first_nonblank <- function(x){
+  x <- x[!is.na(x) & stringr::str_trim(x) != ""]
+  if (length(x)) x[1] else NA_character_
+}
+
+pc <- data_all %>%
+  dplyr::transmute(
+    Year       = as.integer(.data[["Year"]]),
+    Venue_code = as.character(.data[["Venue code"]]),
+    pc         = stringr::str_squish(as.character(.data[["Venue postcode"]]))
+  ) %>%
+  dplyr::filter(Year == YEAR, !is.na(Venue_code), Venue_code != "") %>%
+  dplyr::group_by(Venue_code) %>%
+  dplyr::summarise(pc = first_nonblank(pc), .groups = "drop") %>%
+  dplyr::filter(!is.na(pc), pc != "") %>%
+  dplyr::mutate(
+    # e.g. "EH1 2AB" -> "EH1", "EH10 4XX" -> "EH10"
+    sector = stringr::str_to_upper(stringr::str_replace(pc, "^([A-Za-z]{1,2}\\d{1,2}).*$", "\\1"))
+  ) %>%
+  dplyr::count(sector, sort = TRUE, name = "n") %>%
+  dplyr::slice_head(n = 15)
+
+ggplot(pc, aes(x = reorder(sector, n), y = n)) +
+  geom_col() +
+  coord_flip() +
+  labs(
+    title = paste0("Venue count by postcode sector (", YEAR, ")"),
+    x = "Postcode sector", y = "Venues"
+  ) +
+  theme_minimal(base_size = 12)
+
+```
+
+### clean tables: website needed.
+
+What: This script produces three cleaned Excel tables that the website can load directly: an event-level table for 2022–2025 (events_2022_2025_clean.xlsx), a 2025 “Discovery” table in the same shape as the app’s filters (2025_clean_min.xlsx), and a 2025 venue master table for maps/venue pages (2025_venue_clean_v2.xlsx).
+
+Why: The raw Fringe files repeat the same event/venue across multiple rows and often contain blanks or inconsistent formats (prices, dates, coordinates), which breaks joins and creates duplicates in filters, charts, and maps; exporting these cleaned tables once makes the dashboard stable, reproducible, and faster to load.
+
+How: We first standardise columns from data_all, then de-duplicate to one row per (Year, Code) by taking the first non-blank text fields, the minimum positive full price, the max performances, the earliest first date and latest last date, and average lat/lon when available; from that event table we build a 2025 discovery sheet with simple Genre/Age recoding and a popularity proxy, and we also aggregate 2025 rows by Venue_code to create a single venue record with counts, coordinates, accessibility flags, and activity level, then write everything to .xlsx files under outputs/.
+
+```{r}
+out_dir <- "outputs"
+if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
+
+# ---------------------------
+# 1) Read (all columns as text; avoid type drift)
+# ---------------------------
+read_one <- function(path, yr){
+  df <- read_excel(path, skip = 2, col_types = "text")
+  if (!("Year" %in% names(df))) df$Year <- as.character(yr)
+  df
+}
+
+data_all <- bind_rows(
+  read_one("2022.xlsx", 2022),
+  read_one("2023.xlsx", 2023),
+  read_one("2024.xlsx", 2024),
+  read_one("2025.xlsx", 2025)
+)
+
+# ---------------------------
+# 2) Set column names used in your raw files
+#    (If any differ, change here only)
+# ---------------------------
+COL_YEAR  <- "Year"
+COL_CODE  <- "Code"                 # change if your file uses another name
+COL_TITLE <- "Title"                # change if needed
+
+COL_GENRE <- "Genre"
+COL_ART   <- "Artist"
+COL_AGE   <- "Age category"
+
+COL_VENUE <- "Venue"
+COL_VCODE <- "Venue code"
+COL_VADDR <- "Venue address"
+COL_VPOST <- "Venue postcode"
+COL_VSITE <- "Venue website"
+COL_VDESC <- "Venue description"
+COL_VACC  <- "Venue accessibility"
+COL_LAT   <- "Latitude"
+COL_LON   <- "Longitude"
+
+COL_PERF  <- "Performances #"
+COL_PRICE <- "Lowest full price"
+COL_FD    <- "First performance date"
+COL_LD    <- "Last performance date"
+
+# ---------------------------
+# 3) Small helpers
+# ---------------------------
+first_nonblank <- function(x){
+  x <- x[!is.na(x) & str_trim(x) != ""]
+  if (length(x)) x[1] else NA_character_
+}
+min_pos <- function(x){
+  x <- x[!is.na(x) & x > 0]
+  if (length(x)) min(x) else NA_real_
+}
+
+as_date_safe <- function(x){
+  if (inherits(x, "Date")) return(x)
+  if (is.numeric(x)) return(as.Date(x, origin = "1970-01-01"))
+  suppressWarnings(as.Date(x))
+}
+fmt_ymd <- function(d){
+  d <- as_date_safe(d)
+  ifelse(is.na(d), NA_character_, format(d, "%Y-%m-%d"))
+}
+
+fmt_day_mon <- function(d){
+  d <- as_date_safe(d)
+  if (is.na(d)) return(NA_character_)
+  sub("^0", "", format(d, "%d %b")) # "02 Aug" -> "2 Aug"
+}
+fmt_range <- function(d1, d2){
+  d1 <- as_date_safe(d1); d2 <- as_date_safe(d2)
+  if (is.na(d1) || is.na(d2)) return(NA_character_)
+  paste0(fmt_day_mon(d1), "\u2013", fmt_day_mon(d2))
+}
+
+map_genre <- function(g){
+  dplyr::case_when(
+    g == "Cabaret and Variety"               ~ "Cabaret",
+    g == "Musicals and Opera"                ~ "Music",
+    g == "Spoken Word"                       ~ "Theatre",
+    g == "Children's Shows"                  ~ "Children\u2019s shows",
+    g == "Dance Physical Theatre and Circus" ~ "Dance",
+    g %in% c("Events","Exhibitions")         ~ "Other",
+    TRUE                                     ~ g
+  )
+}
+map_age_display <- function(a){
+  dplyr::case_when(
+    a %in% c("0+","3+","5+") ~ "All Ages",
+    a == "14+"               ~ "12+",
+    TRUE                     ~ a
+  )
+}
+
+# ---------------------------
+# 4) Base rows (standardise types)
+# ---------------------------
+rows_base <- data_all %>%
+  transmute(
+    Year    = as.integer(.data[[COL_YEAR]]),
+    Code    = as.character(.data[[COL_CODE]]),
+    Title   = as.character(.data[[COL_TITLE]]),
+    Artist  = as.character(.data[[COL_ART]]),
+    Genre   = as.character(.data[[COL_GENRE]]),
+    Age     = as.character(.data[[COL_AGE]]),
+
+    Performances      = parse_number(.data[[COL_PERF]]),
+    Lowest_full_price = parse_number(.data[[COL_PRICE]]),
+
+    First_date = as_date_safe(.data[[COL_FD]]),
+    Last_date  = as_date_safe(.data[[COL_LD]]),
+
+    Venue         = as.character(.data[[COL_VENUE]]),
+    Venue_code    = as.character(.data[[COL_VCODE]]),
+    Venue_address = as.character(.data[[COL_VADDR]]),
+    Venue_post    = as.character(.data[[COL_VPOST]]),
+    Venue_site    = as.character(.data[[COL_VSITE]]),
+    Venue_desc    = as.character(.data[[COL_VDESC]]),
+    Venue_access  = as.character(.data[[COL_VACC]]),
+    Latitude      = suppressWarnings(parse_number(.data[[COL_LAT]])),
+    Longitude     = suppressWarnings(parse_number(.data[[COL_LON]]))
+  )
+
+# ---------------------------
+# 5) Deduplicate events by Year+Code (keep first nonblank, aggregate numerics/dates)
+# ---------------------------
+events_2022_2025_clean <- rows_base %>%
+  filter(!is.na(Year), !is.na(Code), Code != "") %>%
+  group_by(Year, Code) %>%
+  summarise(
+    title             = first_nonblank(Title),
+    artist            = first_nonblank(Artist),
+    genre             = first_nonblank(Genre),
+    age_category      = first_nonblank(Age),
+    venue             = first_nonblank(Venue),
+    venue_code        = first_nonblank(Venue_code),
+    venue_address     = first_nonblank(Venue_address),
+    venue_postcode    = first_nonblank(Venue_post),
+    latitude          = if (all(is.na(Latitude)))  NA_real_ else mean(Latitude, na.rm = TRUE),
+    longitude         = if (all(is.na(Longitude))) NA_real_ else mean(Longitude, na.rm = TRUE),
+    performances      = if (all(is.na(Performances))) NA_real_ else max(Performances, na.rm = TRUE),
+    lowest_full_price = min_pos(Lowest_full_price),
+    first_date        = if (all(is.na(First_date))) NA else min(First_date, na.rm = TRUE),
+    last_date         = if (all(is.na(Last_date)))  NA else max(Last_date,  na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  arrange(Year, venue, title) %>%
+  rename(year = Year, code = Code)
+
+writexl::write_xlsx(events_2022_2025_clean, file.path(out_dir, "events_2022_2025_clean.xlsx"))
+
+# ---------------------------
+# 6) OUTPUT: 2025_discovery_table.xlsx
+#    - headers:
+#      Code Title Artist Genre Tag Venue Country Lowest_full_price Age Performances Dates Start End
+#    - Dates: "1 Aug–16 Aug"
+#    - Start/End: "2025/8/1" (no leading zeros)
+# ---------------------------
+
+# helpers for Start/End format like 2025/8/1
+fmt_ymd_slash <- function(d){
+  d <- as_date_safe(d)
+  if (is.na(d)) return(NA_character_)
+  lt <- as.POSIXlt(d)
+  paste0(lt$year + 1900, "/", lt$mon + 1, "/", lt$mday)
+}
+
+# pull Tag + Country from raw input (because events_2022_2025_clean doesn't keep them)
+tag_country_2025 <- data_all %>%
+  mutate(
+    Year = as.integer(.data[[COL_YEAR]]),
+    Code = as.character(.data[[COL_CODE]])
+  ) %>%
+  filter(Year == 2025, !is.na(Code), Code != "") %>%
+  group_by(Year, Code) %>%
+  summarise(
+    Tag     = first_nonblank(.data[["Genre tags"]]),
+    Country = first_nonblank(.data[["Country"]]),
+    .groups = "drop"
+  )
+
+events_2025_discovery_table <- events_2022_2025_clean %>%
+  filter(year == 2025) %>%
+  left_join(tag_country_2025, by = c("year" = "Year", "code" = "Code")) %>%
+  mutate(
+    # keep raw-ish fields (no mapping unless你希望也套用 map_genre/map_age_display)
+    Code  = code,
+    Title = title,
+    Artist = artist,
+    Genre  = genre,
+    Venue  = venue,
+    Age    = age_category,
+
+    Lowest_full_price = as.numeric(lowest_full_price),
+    Performances      = as.integer(round(performances)),
+
+    Dates = mapply(fmt_range, first_date, last_date),
+    Start = mapply(fmt_ymd_slash, first_date),
+    End   = mapply(fmt_ymd_slash, last_date)
+  ) %>%
+  transmute(
+    Code,
+    Title,
+    Artist,
+    Genre,
+    Tag,
+    Venue,
+    Country,
+    Lowest_full_price,
+    Age,
+    Performances,
+    Dates,
+    Start,
+    End
+  ) %>%
+  arrange(Venue, Title)
+
+writexl::write_xlsx(events_2025_discovery_table, file.path(out_dir, "2025_discovery_table.xlsx"))
+
+# ---------------------------
+# 7) OUTPUT: venue_table.xlsx
+#    - exact headers
+#    - Date(s) like "2 Aug–24 Aug"
+#    - Accessible_flag TRUE/FALSE
+# ---------------------------
+venue_table <- rows_base %>%
+  filter(Year == 2025, !is.na(Venue_code), Venue_code != "") %>%
+  group_by(Venue_code, Venue) %>%
+  summarise(
+    Address       = first_nonblank(Venue_address),
+    Postcode      = first_nonblank(Venue_post),
+    Website       = first_nonblank(Venue_site),
+    Description   = first_nonblank(Venue_desc),
+    Accessibility = first_nonblank(Venue_access),
+    Latitude      = if (all(is.na(Latitude)))  NA_real_ else mean(Latitude, na.rm = TRUE),
+    Longitude     = if (all(is.na(Longitude))) NA_real_ else mean(Longitude, na.rm = TRUE),
+    Unique_events = as.integer(n_distinct(Code)),
+    Performances  = if (all(is.na(Performances))) NA_integer_ else as.integer(round(sum(Performances, na.rm = TRUE))),
+    date_first    = if (all(is.na(First_date))) NA else min(First_date, na.rm = TRUE),
+    date_last     = if (all(is.na(Last_date)))  NA else max(Last_date,  na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    `Date(s)` = mapply(fmt_range, date_first, date_last),
+    Accessible_flag = if_else(
+      !is.na(Accessibility) &
+        str_detect(str_to_lower(Accessibility), "wheelchair|accessible|step[- ]*free|ramp"),
+      TRUE, FALSE, missing = FALSE
+    )
+  ) %>%
+  arrange(as.character(Venue_code)) %>%
+  transmute(
+    Venue_code,
+    Venue,
+    Address,
+    Postcode,
+    `Date(s)`,
+    Performances,
+    Unique_events,
+    Website,
+    Description,
+    Accessibility,
+    Latitude,
+    Longitude,
+    Accessible_flag
+  )
+
+writexl::write_xlsx(venue_table, file.path(out_dir, "venue_table.xlsx"))
+```
+
+Why: Create a single, deduplicated “clean events” Excel plus genre-by-year and venue-by-year summary sheets so the dashboard’s sub-panels, filters, and maps run on consistent keys (Year–Code / Venue code) without double counting, missing fields, or contradictory price/date/geo values.
+
+Who: Dashboard users who need reliable planning and analysis outputs—tutors assessing the data work, researchers comparing programme composition across years, and festival/venue planners who want defensible counts, price signals, country diversity, and venue activity metrics from the same source tables.
+
+How: Starting from data_all, we standardise types (years to integer; codes/text to character; prices and performance counts to numeric; dates to Date; coordinates to numeric) and then deduplicate at the event level by grouping on (Year, Code); within each group we keep the first non-blank value for stable text fields (Title and venue metadata), merge multi-valued categorical fields into tidy lists (all Genres, all Age categories with blanks made explicit, and all Countries) and compute consistent numeric roll-ups (minimum positive full price, minimum non-negative concession price, a validity-checked concession flag requiring 0 ≤ concession ≤ full and full > 0, maximum performances, earliest first date, latest last date, and mean latitude/longitude when available). From this clean event table we then produce summary sheets designed for direct dashboard use: (i) Genre × Year with the number of unique events per genre, the number of distinct source countries represented in that genre-year, and price/offer statistics (median and mean full price, and concession offer rate); and (ii) Venue × Year with event counts plus venue metadata (name, postcode/address, website, accessibility text, and averaged coordinates), enabling map layers and venue comparisons to be computed from one consistent reference workbook.
+
+```{r}
+out_dir <- "outputs"
+if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
+
+first_nonblank <- function(x){
+  x <- x[!is.na(x) & stringr::str_trim(x) != ""]
+  if (length(x)) x[1] else NA_character_
+}
+min_pos <- function(x){
+  x <- x[!is.na(x) & x > 0]
+  if (length(x)) min(x) else NA_real_
+}
+min_nonneg <- function(x){
+  x <- x[!is.na(x) & x >= 0]
+  if (length(x)) min(x) else NA_real_
+}
+mean_or_na <- function(x){
+  if (all(is.na(x))) NA_real_ else mean(x, na.rm = TRUE)
+}
+mean_logical_or_na <- function(x){
+  if (all(is.na(x))) NA_real_ else mean(x, na.rm = TRUE)
+}
+
+rows_base <- data_all %>%
+  transmute(
+    Year   = as.integer(.data[["Year"]]),
+    Code   = as.character(.data[["Code"]]),
+    Title  = as.character(.data[["Title"]]),
+    Genre  = as.character(.data[["Genre"]]),
+    Age    = as.character(.data[["Age category"]]),
+    Country= as.character(.data[["Country"]]),
+
+    Lowest_full_price       = readr::parse_number(as.character(.data[["Lowest full price"]])),
+    Lowest_concession_price = readr::parse_number(as.character(.data[["Lowest concession price"]])),
+    Performances            = readr::parse_number(as.character(.data[["Performances #"]])),
+    First_date              = as.Date(.data[["First performance date"]]),
+    Last_date               = as.Date(.data[["Last performance date"]]),
+
+    Venue        = as.character(.data[["Venue"]]),
+    Venue_code   = as.character(.data[["Venue code"]]),
+    Venue_address= as.character(.data[["Venue address"]]),
+    Venue_post   = as.character(.data[["Venue postcode"]]),
+    Venue_site   = as.character(.data[["Venue website"]]),
+    Venue_desc   = as.character(.data[["Venue description"]]),
+    Venue_access = as.character(.data[["Venue accessibility"]]),
+    Latitude     = suppressWarnings(readr::parse_number(as.character(.data[["Latitude"]]))),
+    Longitude    = suppressWarnings(readr::parse_number(as.character(.data[["Longitude"]])))
+  )
+
+clean_events <- rows_base %>%
+  filter(!is.na(Year), !is.na(Code), Code != "") %>%
+  group_by(Year, Code) %>%
+  summarise(
+    Title = first_nonblank(Title),
+
+    Genres_list = {
+      g <- unique(Genre[!is.na(Genre) & stringr::str_trim(Genre) != ""])
+      paste(sort(g), collapse = "; ")
+    },
+    Ages_list = {
+      a <- Age
+      a[is.na(a) | stringr::str_trim(a) == ""] <- "(blank)"
+      paste(sort(unique(a)), collapse = "; ")
+    },
+    Countries_list = {
+      ctry <- unique(Country[!is.na(Country) & stringr::str_trim(Country) != ""])
+      paste(sort(ctry), collapse = "; ")
+    },
+
+    Lowest_full_price       = min_pos(Lowest_full_price),
+    Lowest_concession_price = min_nonneg(Lowest_concession_price),
+    Has_concession = !is.na(Lowest_full_price) & Lowest_full_price > 0 &
+                     !is.na(Lowest_concession_price) & Lowest_concession_price <= Lowest_full_price,
+
+    Performances = if (all(is.na(Performances))) NA_real_ else max(Performances, na.rm = TRUE),
+    First_date   = if (all(is.na(First_date)))   as.Date(NA) else min(First_date, na.rm = TRUE),
+    Last_date    = if (all(is.na(Last_date)))    as.Date(NA) else max(Last_date,  na.rm = TRUE),
+
+    Venue        = first_nonblank(Venue),
+    Venue_code   = first_nonblank(Venue_code),
+    Venue_address= first_nonblank(Venue_address),
+    Venue_post   = first_nonblank(Venue_post),
+    Venue_site   = first_nonblank(Venue_site),
+    Venue_desc   = first_nonblank(Venue_desc),
+    Venue_access = first_nonblank(Venue_access),
+    Latitude     = mean_or_na(Latitude),
+    Longitude    = mean_or_na(Longitude),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    Lowest_full_price       = ifelse(is.infinite(Lowest_full_price), NA_real_, Lowest_full_price),
+    Lowest_concession_price = ifelse(is.infinite(Lowest_concession_price), NA_real_, Lowest_concession_price)
+  )
+
+genre_year_summary <- clean_events %>%
+  mutate(
+    Main_genre = {
+      parts <- stringr::str_split(Genres_list, ";\\s*")
+      vapply(parts, function(v) if (length(v) && nzchar(v[1])) v[1] else NA_character_, character(1))
+    }
+  ) %>%
+  group_by(Year, Main_genre) %>%
+  summarise(
+    events     = n(),
+    med_price  = if (all(is.na(Lowest_full_price))) NA_real_ else median(Lowest_full_price, na.rm = TRUE),
+    mean_price = mean_or_na(Lowest_full_price),
+    offer_rate = mean_logical_or_na(Has_concession),
+    .groups = "drop"
+  ) %>%
+  arrange(Year, desc(events))
+
+venue_year_summary <- clean_events %>%
+  filter(!is.na(Venue_code) & Venue_code != "") %>%
+  group_by(Year, Venue_code) %>%
+  summarise(
+    Venue    = first_nonblank(Venue),
+    events   = n(),
+    lat      = mean_or_na(Latitude),
+    lon      = mean_or_na(Longitude),
+    website  = first_nonblank(Venue_site),
+    address  = first_nonblank(Venue_address),
+    postcode = first_nonblank(Venue_post),
+    access   = first_nonblank(Venue_access),
+    .groups = "drop"
+  ) %>%
+  arrange(Year, desc(events))
+
+writexl::write_xlsx(
+  list(
+    clean_events_unique = clean_events,
+    summary_genre_by_year = genre_year_summary,
+    summary_venue_by_year = venue_year_summary
+  ),
+  path = file.path(out_dir, "fringe_outputs.xlsx")
+)
+```
+
+What: We export one Excel file (venues_clean.xlsx) with two sheets: venue_rows (one row per event per year, i.e. (Year, Code), with the venue fields cleaned) and venue_clean (one row per venue, i.e. Venue_code, with a single “best” record for address/website/accessibility/lat-lon plus basic totals).
+
+Why: The raw data repeats venue info across many events and it’s often inconsistent or missing in places. Keeping two tables avoids trade-offs: venue_clean is what the website needs for maps and venue pages (fast, one marker per venue, no duplicates), while venue_rows keeps the link back to the underlying events so you can join to other event tables, check problems, or build year-specific views without re-cleaning everything.
+
+How: We first de-duplicate events by (Year, Code), then for each event take the first non-blank venue text fields, extract a website domain, and average coordinates when multiple rows exist—this makes venue_rows. Then we group venue_rows by Venue_code to produce venue_clean, adding Unique_events and Years_covered, and write both sheets into the same .xlsx.
+
+```{r}
+# Venues table (event-level + venue-level) 
+out_dir <- "outputs"
+if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
+
+first_nonblank <- function(x){
+  x <- x[!is.na(x) & stringr::str_trim(x) != ""]
+  if (length(x)) x[1] else NA_character_
+}
+
+first_domain <- function(x){
+  x <- x[!is.na(x) & stringr::str_trim(x) != ""]
+  if (!length(x)) return(NA_character_)
+  x1 <- as.character(x[1])
+  x1 <- ifelse(grepl("^https?://", x1), x1, paste0("https://", x1))
+  tolower(gsub("^https?://|/.*$", "", x1))
+}
+
+# ---- A) venue_rows: event-level (one row per Year+Code, with venue fields) ----
+venue_rows <- data_all %>%
+  dplyr::transmute(
+    Year                = as.integer(.data[["Year"]]),
+    Code                = as.character(.data[["Code"]]),
+    Title               = as.character(.data[["Title"]]),
+    Venue               = as.character(.data[["Venue"]]),
+    Venue_code          = as.character(.data[["Venue code"]]),
+    Venue_address       = as.character(.data[["Venue address"]]),
+    Venue_postcode      = as.character(.data[["Venue postcode"]]),
+    Venue_website       = as.character(.data[["Venue website"]]),
+    Venue_description   = as.character(.data[["Venue description"]]),
+    Venue_accessibility = as.character(.data[["Venue accessibility"]]),
+    Latitude            = suppressWarnings(readr::parse_number(as.character(.data[["Latitude"]]))),
+    Longitude           = suppressWarnings(readr::parse_number(as.character(.data[["Longitude"]])))
+  ) %>%
+  dplyr::filter(!is.na(Year), !is.na(Code), Code != "") %>%
+  dplyr::group_by(Year, Code) %>%
+  dplyr::summarise(
+    Title               = first_nonblank(Title),
+    Venue               = first_nonblank(Venue),
+    Venue_code          = first_nonblank(Venue_code),
+    Venue_address       = first_nonblank(Venue_address),
+    Venue_postcode      = first_nonblank(Venue_postcode),
+    Venue_website       = first_nonblank(Venue_website),
+    Venue_domain        = first_domain(Venue_website),
+    Venue_description   = first_nonblank(Venue_description),
+    Venue_accessibility = first_nonblank(Venue_accessibility),
+    Latitude            = if (all(is.na(Latitude))) NA_real_ else mean(Latitude,  na.rm = TRUE),
+    Longitude           = if (all(is.na(Longitude))) NA_real_ else mean(Longitude, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# ---- B) venue_clean: venue-level master (one row per Venue_code) ----
+venue_clean <- venue_rows %>%
+  dplyr::filter(!is.na(Venue_code), Venue_code != "") %>%
+  dplyr::group_by(Venue_code) %>%
+  dplyr::summarise(
+    Venue               = first_nonblank(Venue),
+    Venue_address       = first_nonblank(Venue_address),
+    Venue_postcode      = first_nonblank(Venue_postcode),
+    Venue_website       = first_nonblank(Venue_website),
+    Venue_domain        = first_nonblank(Venue_domain),
+    Venue_description   = first_nonblank(Venue_description),
+    Venue_accessibility = first_nonblank(Venue_accessibility),
+    Latitude            = if (all(is.na(Latitude))) NA_real_ else mean(Latitude,  na.rm = TRUE),
+    Longitude           = if (all(is.na(Longitude))) NA_real_ else mean(Longitude, na.rm = TRUE),
+    Unique_events       = dplyr::n_distinct(paste0(Year, "::", Code)),
+    Years_covered       = paste(sort(unique(Year)), collapse = ", "),
+    .groups = "drop"
+  ) %>%
+  dplyr::arrange(dplyr::desc(Unique_events), Venue_code)
+
+# ---- write one xlsx with two sheets ----
+out_path <- file.path(out_dir, "venues_clean.xlsx")
+
+if (requireNamespace("writexl", quietly = TRUE)) {
+  writexl::write_xlsx(
+    list(
+      venue_rows  = venue_rows,   # event-level table
+      venue_clean = venue_clean   # venue-level master
+    ),
+    out_path
+  )
+} else if (requireNamespace("openxlsx", quietly = TRUE)) {
+  openxlsx::write.xlsx(
+    list(
+      venue_rows  = venue_rows,
+      venue_clean = venue_clean
+    ),
+    out_path,
+    overwrite = TRUE
+  )
+} else {
+  stop("Need package 'writexl' or 'openxlsx' to write .xlsx. Install one: install.packages('writexl') or install.packages('openxlsx').")
+}
+```
+
+```{r}
+out_dir <- "outputs"
+if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
+
+data_all <- bind_rows(
+  read_excel("2022.xlsx", skip = 2),
+  read_excel("2023.xlsx", skip = 2),
+  read_excel("2024.xlsx", skip = 2),
+  read_excel("2025.xlsx", skip = 2)
+)
+
+
+first_nonblank <- function(x){
+  x <- x[!is.na(x) & str_trim(x) != ""]
+  if (length(x)) x[1] else NA_character_
+}
+min_pos <- function(x){
+  x <- x[!is.na(x) & x > 0]
+  if (length(x)) min(x) else NA_real_
+}
+
+safe_min_date <- function(x){
+  x <- as.Date(x)
+  x <- x[!is.na(x)]
+  if (length(x)) min(x) else as.Date(NA)
+}
+safe_max_date <- function(x){
+  x <- as.Date(x)
+  x <- x[!is.na(x)]
+  if (length(x)) max(x) else as.Date(NA)
+}
+
+fmt_day_mon <- function(d){
+  if (is.na(d)) return(NA_character_)
+  str_squish(format(d, "%e %b"))   # %e 会带前导空格，squish后变成 "31 Jul"
+}
+fmt_range <- function(d1, d2){
+  if (is.na(d1) || is.na(d2)) return(NA_character_)
+  if (d1 == d2) return(fmt_day_mon(d1))
+  paste0(fmt_day_mon(d1), "\u2013", fmt_day_mon(d2))  # en dash
+}
+
+fix_url <- function(x) {
+  x <- as.character(x)
+  ifelse(is.na(x) | x == "", NA_character_,
+         ifelse(grepl("^https?://", x), x, paste0("https://", x)))
+}
+
+# -----------------------------
+# 1) Base rows 
+# -----------------------------
+rows_base <- data_all %>%
+  transmute(
+    Year    = as.integer(.data[["Year"]]),
+    Code    = as.character(.data[["Code"]]),
+    Title   = as.character(.data[["Title"]]),
+    Artist  = as.character(.data[["Artist"]]),
+    Genre   = as.character(.data[["Genre"]]),
+    Age     = as.character(.data[["Age category"]]),
+    Country = as.character(.data[["Country"]]),
+
+    Lowest_full_price = parse_number(as.character(.data[["Lowest full price"]])),
+    Performances      = parse_number(as.character(.data[["Performances #"]])),
+
+    First_date        = as.Date(.data[["First performance date"]]),
+    Last_date         = as.Date(.data[["Last performance date"]]),
+
+    Venue         = as.character(.data[["Venue"]]),
+    Venue_code    = str_squish(as.character(.data[["Venue code"]])),   
+    Venue_address = as.character(.data[["Venue address"]]),
+    Venue_post    = as.character(.data[["Venue postcode"]]),
+    Venue_site    = as.character(.data[["Venue website"]]),
+    Venue_desc    = as.character(.data[["Venue description"]]),
+    Venue_access  = as.character(.data[["Venue accessibility"]]),
+
+    Latitude      = suppressWarnings(parse_number(as.character(.data[["Latitude"]]))),
+    Longitude     = suppressWarnings(parse_number(as.character(.data[["Longitude"]])))
+  )
+
+# -----------------------------
+# 2) 2025 Venue Dates (Date(s))
+# -----------------------------
+venue_dates_2025 <- rows_base %>%
+  filter(Year == 2025, !is.na(Venue_code), Venue_code != "") %>%
+  group_by(Venue_code, Venue) %>%
+  summarise(
+    first_date = safe_min_date(First_date),
+    last_date  = safe_max_date(Last_date),
+    .groups = "drop"
+  ) %>%
+  mutate(`Date(s)` = mapply(fmt_range, first_date, last_date) |> as.character()) %>%
+  select(Venue_code, `Date(s)`)
+
+# -----------------------------
+# 3) Website Venue table (remove activity level; insert Date(s))
+# -----------------------------
+venue_table_2025_for_site <- rows_base %>%
+  filter(Year == 2025, !is.na(Venue_code), Venue_code != "") %>%
+  group_by(Venue_code, Venue) %>%
+  summarise(
+    Address      = first_nonblank(Venue_address),
+    Postcode     = first_nonblank(Venue_post),
+    Website      = first_nonblank(Venue_site),
+    Performances = sum(Performances, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    Address  = str_squish(as.character(Address)),
+    Postcode = str_squish(as.character(Postcode)),
+    Website  = fix_url(Website),
+    Performances = ifelse(is.infinite(Performances), NA_real_, Performances)
+  ) %>%
+  left_join(venue_dates_2025, by = "Venue_code") %>%
+  transmute(
+    Venue,
+    Address,
+    Postcode,
+    `Date(s)`,
+    Performances,
+    Website
+  ) %>%
+  arrange(Venue)
+
+# -----------------------------
+# 4) Export xlsx
+# -----------------------------
+write_xlsx(
+  list(Venue_Table = venue_table_2025_for_site),
+  file.path(out_dir, "2025_venue_table_for_site.xlsx")
+)
+```
+
+## NEW PLOT ADDED IN WEBSITE
+
+## Concentration plot: Gov and Researcher
+What: The first concentration chart reports the Herfindahl–Hirschman Index (HHI) each year, computed from each venue’s share of total performances; 
+the Lorenz chart plots, for each year, the cumulative share of performances against the cumulative share of venues after sorting venues from smallest to largest. 
+
+Why: Together they quantify how unevenly Fringe activity is distributed across venues—higher HHI and a more bowed Lorenz curve indicate that a small number of venues account for a large fraction of performances, which is useful for diagnosing market concentration and comparing how this imbalance changes from 2022 to 2025. 
+
+How: We parse Year, Venue code, and Performances, aggregate to venue year totals, convert to venue shares within each year, then compute HHI = sum(share^2) and build Lorenz points via cumulative sums of sorted venue shares (with the 45° line as equality), plotting all years with different colours.
+
+```{r}
+#Concerntration 
+parse_int <- function(x){
+  suppressWarnings(as.integer(readr::parse_number(as.character(x))))
+}
+first_nonblank <- function(x){
+  x <- x[!is.na(x) & stringr::str_trim(x) != ""]
+  if (length(x)) x[1] else NA_character_
+}
+venue_perf_year <- data_all %>%
+  transmute(
+    Year       = as.integer(.data[["Year"]]),
+    Venue_code = as.character(.data[["Venue code"]]),
+    perf       = parse_int(.data[["Performances #"]])
+  ) %>%
+  filter(Year %in% years, !is.na(Venue_code), Venue_code != "") %>%
+  mutate(perf = ifelse(is.na(perf) | perf < 0, 0L, perf)) %>%
+  group_by(Year, Venue_code) %>%
+  summarise(perf = sum(perf, na.rm = TRUE), .groups = "drop")
+
+hhi_year <- venue_perf_year %>%
+  group_by(Year) %>%
+  mutate(
+    total = sum(perf, na.rm = TRUE),
+    share = ifelse(total > 0, perf / total, 0)
+  ) %>%
+  summarise(HHI = sum(share^2, na.rm = TRUE), .groups = "drop") %>%
+  arrange(Year)
+
+p_concentration_hhi <- ggplot(hhi_year, aes(x = Year, y = HHI)) +
+  geom_line(linewidth = 0.9) +
+  geom_point(size = 2) +
+  scale_x_continuous(breaks = years) +
+  scale_y_continuous(labels = number_format(accuracy = 0.001)) +
+  labs(
+    title = "Venue concentration (HHI of performance shares)",
+    x = "Year", y = "HHI"
+  ) +
+  theme_minimal(base_size = 12)
+
+print(p_concentration_hhi)
+```
+
+```{r}
+#Concentration（Lorenz）
+
+lorenz_all <- venue_perf_year %>%
+  group_by(Year) %>%
+  arrange(perf, .by_group = TRUE) %>%
+  mutate(
+    perf = pmax(perf, 0),
+    total_perf = sum(perf, na.rm = TRUE),
+    share = ifelse(total_perf > 0, perf / total_perf, 0),
+    cum_share_perf = cumsum(share), #sum performance share
+    n = n(),
+    cum_share_venues = row_number() / n #Venues share
+  ) %>%
+  ungroup()
+
+p_concentration_lorenz_all_years <- ggplot(
+  lorenz_all,
+  aes(x = cum_share_venues, y = cum_share_perf, colour = factor(Year), group = Year)
+) +
+  geom_line(linewidth = 0.9) +
+  geom_abline(intercept = 0, slope = 1, linetype = 2) +
+  scale_x_continuous(labels = percent) +
+  scale_y_continuous(labels = percent) +
+  labs(
+    title = "Lorenz curve of venue performances (2022–2025)",
+    x = "Cumulative share of venues",
+    y = "Cumulative share of performances",
+    colour = "Year"
+  ) +
+  theme_minimal(base_size = 12)
+
+print(p_concentration_lorenz_all_years)
+
+gini_by_year <- lorenz_all %>%
+  group_by(Year) %>%
+  summarise(
+    gini = {
+      x <- c(0, cum_share_venues)
+      y <- c(0, cum_share_perf)
+      area <- sum((x[-1] - x[-length(x)]) * (y[-1] + y[-length(y)]) / 2)
+      1 - 2 * area
+    },
+    .groups = "drop"
+  )
+
+gini_by_year
+```
+
+##Venue VS price
+
+Why：To see whether bigger venues (more total performances) tend to charge higher or lower typical ticket prices, and whether this relationship changes from 2022 to 2025; 
+
+Who: For readers who want a quick view of venue market structure (researchers, reviewers, and users planning shows); 
+
+How: Aggregate the raw 2022–2025 XLSX data by year × venue_code to compute performances_total = sum(performances), unique_events = n_distinct(code), and median_price = median(lowest_full_price), then plot a scatter with x = performances_total, y = median_price, point size = unique_events, and facet by year.
+
+```{r}
+venue_year_size_price <- data_all %>%
+  transmute(
+    year = as.integer(.data[["Year"]]),
+    venue_code = stringr::str_squish(as.character(.data[["Venue code"]])),
+    code = stringr::str_squish(as.character(.data[["Code"]])),
+    perf = suppressWarnings(as.numeric(gsub("[^0-9.]+", "", as.character(.data[["Performances #"]])))),
+    price = suppressWarnings(as.numeric(gsub("[^0-9.]+", "", as.character(.data[["Lowest full price"]]))))
+  ) %>%
+  filter(
+    year %in% years,
+    !is.na(year),
+    !is.na(venue_code), venue_code != "",
+    !is.na(code), code != ""
+  ) %>%
+  group_by(year, venue_code) %>%
+  summarise(
+    performances_total = sum(perf, na.rm = TRUE),
+    unique_events = n_distinct(code),
+    median_price = suppressWarnings(stats::median(price, na.rm = TRUE)),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    median_price = ifelse(is.finite(median_price), median_price, NA_real_),
+    performances_total = ifelse(is.finite(performances_total), performances_total, NA_real_)
+  ) %>%
+  filter(!is.na(performances_total), performances_total > 0, !is.na(median_price))
+
+p_vsize_price <- ggplot(venue_year_size_price,
+                        aes(x = performances_total, y = median_price, size = unique_events)) +
+  geom_point(alpha = 0.65) +
+  facet_wrap(~ year, scales = "free_x") +
+  labs(
+    title = "Venue size vs ticket price (by year)",
+    x = "Total performances per venue",
+    y = "Median lowest full price",
+    size = "Unique events"
+  ) +
+  theme_minimal(base_size = 12)
+
+print(p_vsize_price)
+```
+
+## Ticket price distribution by year:
+
+Why: Compare how ticket prices shift and spread across years (typical level, variability, and outliers) to check if prices are rising or becoming more uneven; 
+
+Who: For anyone evaluating pricing patterns over time (users, researchers, reviewers); 
+
+How: Parse lowest_full_price as numeric, keep non-missing values, and draw a year-by-year boxplot where the box shows the IQR, the line shows the median, and points indicate outliers.
+
+```{r}
+# =========================
+# 10) Ticket price distribution by year — ggplot only (MATCH WEBSITE)
+# =========================
+
+price_box_df <- data_all %>%
+  transmute(
+    year = factor(as.integer(.data[["Year"]])),
+    price = suppressWarnings(as.numeric(gsub("[^0-9.]+", "", as.character(.data[["Lowest full price"]]))))
+  ) %>%
+  filter(
+    as.integer(as.character(year)) %in% years,
+    !is.na(year),
+    !is.na(price)
+  ) %>%
+  mutate(year = factor(as.integer(as.character(year)), levels = years))
+
+p_price_box <- ggplot(price_box_df, aes(x = year, y = price)) +
+  geom_boxplot(outlier.alpha = 0.25) +
+  labs(
+    title = "Ticket price distribution by year",
+    x = NULL, y = "Lowest full price"
+  ) +
+  theme_minimal(base_size = 12)
+
+print(p_price_box)
+```
