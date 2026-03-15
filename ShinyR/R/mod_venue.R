@@ -7,7 +7,6 @@ library(DT)
 library(leaflet)
 library(htmltools)
 
-# ---------- helpers ----------
 fix_url <- function(x) {
   x <- as.character(x)
   ifelse(is.na(x) | x == "", NA_character_,
@@ -97,7 +96,7 @@ mod_venue_server <- function(id, data_path = "venue_table.xlsx") {
     }
     radius_fun <- function(n) pmax(3, sqrt(n))
     
-    # ---------- read once ----------
+    # read once
     observeEvent(TRUE, {
       if (!file.exists(data_path)) stop("Venue table file not found: ", data_path)
       
@@ -134,7 +133,7 @@ mod_venue_server <- function(id, data_path = "venue_table.xlsx") {
       
     }, once = TRUE)
     
-    # ---------- shared search filter ----------
+    # shared filter
     base_filtered <- reactive({
       df <- df0()
       req(df)
@@ -152,7 +151,7 @@ mod_venue_server <- function(id, data_path = "venue_table.xlsx") {
       df
     })
     
-    # ---------- MAP dataset (stable): only affected by search + (optional) accessible ----------
+    # MAP dataset (stable): search + accessible
     map_df <- reactive({
       df <- base_filtered()
       req(df)
@@ -163,7 +162,7 @@ mod_venue_server <- function(id, data_path = "venue_table.xlsx") {
       df
     })
     
-    # ---------- TABLE dataset: search + accessible + performances sorting ----------
+    # TABLE dataset: search + accessible + performances sorting
     table_df <- reactive({
       df <- base_filtered()
       req(df)
@@ -217,14 +216,14 @@ mod_venue_server <- function(id, data_path = "venue_table.xlsx") {
         addScaleBar(position = "bottomleft")
     })
     
-    # ---------- map click -> selected_code ----------
+    # map click -> selected_code
     observeEvent(input$map_marker_click, {
       click <- input$map_marker_click
       req(click$id)
       selected_code(str_squish(as.character(click$id)))
     }, ignoreInit = TRUE)
     
-    # ---------- table click -> selected_code (use displayed table_df order) ----------
+    # table click -> selected_code
     observeEvent(input$table_rows_selected, {
       df <- table_df()
       req(df)
@@ -232,7 +231,7 @@ mod_venue_server <- function(id, data_path = "venue_table.xlsx") {
       if (length(idx) == 1) selected_code(df$Venue_code[idx])
     }, ignoreInit = TRUE)
     
-    # ---------- selected_code -> select row in DT (match against table_df) ----------
+    # selected_code -> select row in DT
     observeEvent(selected_code(), {
       code <- selected_code()
       req(code)
@@ -250,7 +249,7 @@ mod_venue_server <- function(id, data_path = "venue_table.xlsx") {
       
     }, ignoreInit = TRUE)
     
-    # ---------- Detail panel (from table_df, so it matches what user sees) ----------
+    # Detail panel
     output$detail <- renderUI({
       df <- table_df()
       req(df)
@@ -286,7 +285,7 @@ mod_venue_server <- function(id, data_path = "venue_table.xlsx") {
       }
     })
     
-    # ---------- DT table (use table_df order; no extra ordering by user) ----------
+    # DT table
     output$table <- renderDT({
       df <- table_df()
       req(df)

@@ -30,6 +30,8 @@ data_all <- bind_rows(
 )
 
 print(colnames(data_all))
+out_dir <- "figures"
+dir.create(out_dir, showWarnings = FALSE)
 ```
 
 Why: This chart shows how many unique events ran each year, so readers can instantly see recovery and growth and use that scale to interpret later plots on prices, genres, and venues, and it is also shows the volumn of the festival each year which is a evidence of this festival getting more and more famous. 
@@ -56,17 +58,20 @@ events_per_year <- data_all %>%
   arrange(Year)
 
 
-ggplot(events_per_year, aes(x = Year, y = event_count, group = 1)) +
+p_events <- ggplot(events_per_year, aes(x = Year, y = event_count, group = 1)) +
   geom_line(linewidth = 0.9) +
   geom_point(size = 2) +
   geom_text(aes(label = comma(event_count)), vjust = -0.6, size = 3.5) +
   scale_x_continuous(breaks = years) +
   scale_y_continuous(labels = comma) +
   labs(
-    title = paste0("Total number of unique events per year (", min(years), "–", max(years), ")"),
+    title = "Total number of unique events per year (2022–2025)",
     x = "Year", y = "Number of events"
   ) +
   theme_minimal(base_size = 12)
+
+ggsave("fig4_events_per_year.png", plot = p_events, 
+       width = 7, height = 4, dpi = 300)
 
 ggplot(events_per_year, aes(x = factor(Year), y = event_count)) +
   geom_col(width = 0.65) +
@@ -127,7 +132,8 @@ mix_share <- mix_share %>%
 year_totals <- mix_share %>% distinct(YearF, year_total)
 
 # Plot 1: stacked shares + totals
-ggplot(mix_share, aes(x = YearF, y = share, fill = Genre)) +
+p_genre_mix_stacked <- ggplot(mix_share, 
+                               aes(x = YearF, y = share, fill = Genre)) +
   geom_col(width = 0.85) +
   geom_text(
     aes(label = percent(share, accuracy = 1)),
@@ -139,13 +145,18 @@ ggplot(mix_share, aes(x = YearF, y = share, fill = Genre)) +
     aes(x = YearF, y = 1.05, label = comma(year_total)),
     inherit.aes = FALSE, size = 3.1
   ) +
-  scale_y_continuous(labels = percent, expand = expansion(mult = c(0, 0.10))) +
+  scale_y_continuous(labels = percent, 
+                     expand = expansion(mult = c(0, 0.10))) +
   labs(
     title = "Genre mix (share of unique events) — 2022–2025",
     x = "Year", y = "Share", fill = "Genre"
   ) +
   coord_cartesian(clip = "off") +
   theme_minimal(base_size = 12)
+
+ggsave(file.path(out_dir, "fig4_genre_mix_share.png"), 
+       plot = p_genre_mix_stacked,
+       width = 9, height = 6, dpi = 300)
 
 # Plot 2: horizontal shares, faceted by year
 ggplot(mix_share, aes(x = share, y = Genre, fill = Genre)) +
@@ -194,6 +205,7 @@ ggplot(trend_full, aes(x = YearF, y = events, fill = YearF)) +
     x = "Year", y = "Events", fill = "Year"
   ) +
   theme_minimal(base_size = 12)
+
 ```
 
 Why: This paired visual isolates which genres materially drove programme change between 2022 and 2025 by combining a rate metric (CAGR) with the endpoint counts, so “fast growth” is not misread as “large impact” and structural shifts can be interpreted alongside absolute scale (i.e., a small genre doubling versus a major genre adding hundreds of shows).
@@ -2130,6 +2142,8 @@ p_vsize_price <- ggplot(venue_year_size_price,
   theme_minimal(base_size = 12)
 
 print(p_vsize_price)
+ggsave("fig4_venue_size_price.png", plot = p_vsize_price,
+       width = 10, height = 6, dpi = 300)
 ```
 
 ## Ticket price distribution by year:

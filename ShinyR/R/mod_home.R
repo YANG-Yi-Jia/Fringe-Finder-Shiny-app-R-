@@ -99,7 +99,7 @@ mod_home_server <- function(id, go_tab, reset_trigger = reactive(0), data_dir = 
         total_performances = "53000+",
         registered_shows = 3893,
         genres_included = g_n,
-        countries_included = c_n
+        countries_included = "62"
       )
     })
     
@@ -110,7 +110,7 @@ mod_home_server <- function(id, go_tab, reset_trigger = reactive(0), data_dir = 
         div(class = "welcome", "Welcome to FringeFinder!"),
         div(class = "tagline", "Find your 2025 Fringe favourites in seconds."),
         
-        # ---- KPI TABLE (Updated to match Screenshot CSS) ----
+        # KPI TABLE
         if (!isTRUE(info$ok)) {
           # Error state
           div(class = "glass kpi-board",
@@ -120,9 +120,9 @@ mod_home_server <- function(id, go_tab, reset_trigger = reactive(0), data_dir = 
               )
           )
         } else {
-          # Success state: New Structure
+          # Success state
           div(
-            class = "kpi-board", # Removed 'glass' so CSS can control border/bg
+            class = "kpi-board", 
             
             # The Grid Container
             div(class = "kpi-matrix",
@@ -131,7 +131,7 @@ mod_home_server <- function(id, go_tab, reset_trigger = reactive(0), data_dir = 
                 div(class = "kpi-cell kpi-cell--ticket",
                     div(class = "kpi-label", "TICKET ISSUED"),
                     tags$a(
-                      href = "https://www.edfringe.com/about-us/the-fringe-society/our-review-of-the-year/",
+                      href = "https://www.edfringe.com/about-us/news-and-blog/an-exciting-and-energising-edinburgh-festival-fringe-2025-comes-to-a-close/",
                       target = "_blank",
                       class = "kpi-link",
                       div(class = "kpi-value", info$tickets)
@@ -165,7 +165,7 @@ mod_home_server <- function(id, go_tab, reset_trigger = reactive(0), data_dir = 
           )
         },
         
-        # ---- 2 big cards (Unchanged) ----
+        
         div(
           class = "panel-stack home-stack",
           div(

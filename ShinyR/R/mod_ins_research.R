@@ -1,4 +1,4 @@
-# R/mod_ins_research.R  (OPTIMIZED COVER VERSION — unified layout + highlight cards + responsive plotly)
+# R/mod_ins_research.R
 library(shiny)
 library(dplyr)
 library(stringr)
@@ -27,9 +27,7 @@ mod_ins_research_ui <- function(id) {
     div(
       style = "display:flex; flex-direction:column; gap:18px;",
       
-      # -------------------------
       # Chart 1: HHI
-      # -------------------------
       div(
         class = "glass",
         div(
@@ -48,9 +46,7 @@ mod_ins_research_ui <- function(id) {
         )
       ),
       
-      # -------------------------
       # Chart 2: Lorenz curve
-      # -------------------------
       div(
         class = "glass",
         div(
@@ -81,7 +77,6 @@ mod_ins_research_server <- function(id, ev_filtered) {
       TRUE
     }
     
-    # ---------- helpers ----------
     to_num <- function(x) suppressWarnings(as.numeric(gsub("[^0-9.]+", "", as.character(x))))
     
     bullets_ui <- function(items) {
@@ -105,9 +100,7 @@ mod_ins_research_server <- function(id, ev_filtered) {
       ys
     })
     
-    # =========================================================
-    # Base: event -> venue-year performances (ONE time)
-    # =========================================================
+    # Base: event -> venue-year performances 
     venue_year_perf <- reactive({
       ev <- ev_filtered(); req(ev)
       need_cols(ev, c("year", "venue_code", "performances"))
@@ -125,9 +118,8 @@ mod_ins_research_server <- function(id, ev_filtered) {
         filter(is.finite(performances), performances > 0)
     })
     
-    # =========================================================
+
     # Chart 1: HHI by year
-    # =========================================================
     conc_by_year <- reactive({
       df <- venue_year_perf(); req(df)
       
@@ -195,9 +187,8 @@ mod_ins_research_server <- function(id, ev_filtered) {
         htmlwidgets::onRender("function(el){setTimeout(function(){Plotly.Plots.resize(el)}, 50);}")
     })
     
-    # =========================================================
+
     # Chart 2: Lorenz curve data
-    # =========================================================
     lorenz_df <- reactive({
       df <- venue_year_perf(); req(df)
       
@@ -260,10 +251,8 @@ mod_ins_research_server <- function(id, ev_filtered) {
         config(displayModeBar = TRUE, scrollZoom = FALSE, responsive = TRUE) %>%
         onRender("function(el){setTimeout(function(){Plotly.Plots.resize(el)}, 50);}")
     })
-    
-    # =========================================================
+
     # Highlights: HHI card
-    # =========================================================
     output$hi_conc <- renderUI({
       df <- conc_by_year(); req(df)
       df <- df %>% arrange(year)
@@ -289,10 +278,8 @@ mod_ins_research_server <- function(id, ev_filtered) {
       ))
     })
     
-    # =========================================================
     # Highlights: Lorenz card (Top 10% venues share + Top 20% context)
     # We approximate via Lorenz: bottom (1-x) venues account for y => top x venues account for (1-y).
-    # =========================================================
     output$hi_lorenz <- renderUI({
       df <- lorenz_df(); req(df)
       validate(need(nrow(df) > 0, "No data."))

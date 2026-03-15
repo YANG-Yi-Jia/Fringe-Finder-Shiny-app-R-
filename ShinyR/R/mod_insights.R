@@ -1,4 +1,4 @@
-# R/mod_insights.R  (COVER VERSION — faster + stable sizing + no early dedup)
+# R/mod_insights.R
 library(shiny)
 library(bslib)
 library(dplyr)
@@ -9,7 +9,7 @@ source("R/mod_ins_general.R")
 source("R/mod_ins_price.R")
 source("R/mod_ins_research.R")
 
-# --------- helpers ----------
+
 to_number <- function(x) {
   x <- as.character(x)
   x <- gsub(",", "", x)
@@ -69,7 +69,7 @@ read_one_year <- function(path, year_value, skip = 2) {
   col_lat <- pick_col(nms, c("Latitude", "lat", "LATITUDE"))
   col_lng <- pick_col(nms, c("Longitude", "lng", "LNG", "LONGITUDE"))
   
-  # safe vectors (never df[[NA]])
+  # safe vectors
   year_vec <- if (!is.na(col_year)) as.integer(df[[col_year]]) else as.integer(year_value)
   
   out <- df %>%
@@ -100,7 +100,6 @@ read_one_year <- function(path, year_value, skip = 2) {
     ) %>%
     filter(!is.na(code), code != "")
   
-  # IMPORTANT: do NOT early-dedup at year×code (breaks venue/genre patterns)
   out
 }
 
@@ -185,7 +184,7 @@ mod_insights_server <- function(id, data_dir = "data", skip = 2, dedup_year_code
     
     years_tbl <- reactive(list_year_files(data_dir))
     
-    # read once (unless year files change)
+ 
     ev_all <- reactive({
       yf <- years_tbl()
       validate(need(nrow(yf) > 0, "No year files found in data/. Expected files like data/2022.xlsx"))
@@ -202,7 +201,7 @@ mod_insights_server <- function(id, data_dir = "data", skip = 2, dedup_year_code
         ) %>%
         filter(!is.na(year), !is.na(code), code != "")
       
-      # Optional canonicalisation: deduplicate to (year, code) with conservative resolution
+      
       if (isTRUE(dedup_year_code)) {
         ev <- ev %>%
           group_by(year, code) %>%

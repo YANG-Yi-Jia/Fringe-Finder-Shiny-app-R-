@@ -25,11 +25,12 @@ mod_discovery_ui <- function(id) {
           
           tags$div(style = "height:10px;"),
           
-          
+          # Price
           tags$div(class="filter-title", "Price ▼"),
           radioButtons(
             ns("price"), label = NULL,
-            choices = c("Low to high","High to low","Free","0-15","15-30","30+"),
+            choices = c("Low to high","High to low","Free",
+                        "0-15","15-30","30+"),
             selected = "Low to high"
           ),
           
@@ -41,7 +42,11 @@ mod_discovery_ui <- function(id) {
             ns("genre"), label = NULL,
             choices = character(0), selected = character(0),
             multiple = TRUE,
-            options = list(placeholder = "Select genres...")
+            options = list(
+              placeholder = "Select genres...",
+              plugins = list("remove_button"),
+              persist = FALSE
+            )
           ),
           
           tags$div(style = "height:10px;"),
@@ -52,7 +57,11 @@ mod_discovery_ui <- function(id) {
             ns("tag"), label = NULL,
             choices = character(0), selected = character(0),
             multiple = TRUE,
-            options = list(placeholder = "Select tags...")
+            options = list(
+              placeholder = "Select tags...",
+              plugins = list("remove_button"),
+              persist = FALSE
+            )
           ),
           
           tags$div(style = "height:10px;"),
@@ -63,21 +72,31 @@ mod_discovery_ui <- function(id) {
             ns("country"), label = NULL,
             choices = character(0), selected = character(0),
             multiple = TRUE,
-            options = list(placeholder = "Select countries...")
+            options = list(
+              placeholder = "Select countries...",
+              plugins = list("remove_button"),
+              persist = FALSE
+            )
           ),
           
           tags$div(style = "height:10px;"),
           
           # Ages
           tags$div(class="filter-title", "Ages ▼"),
-          selectizeInput(
-            ns("age"), label = NULL,
-            choices = character(0), selected = character(0),
-            multiple = TRUE,
-            options = list(placeholder = "Select ages...")
+          numericInput(
+            ns("age_input"),
+            label = NULL,
+            value = NA,
+            min = 0,
+            max = 100,
+            step = 1
+          ),
+          tags$div(
+            style = "font-size:12px; opacity:0.7; margin-top:-8px;",
+            "Enter your age to see suitable shows"
           )
-        )
-      ),
+        )  
+      ),  
       
       # right table
       div(
@@ -89,31 +108,37 @@ mod_discovery_ui <- function(id) {
           DTOutput(ns("table"))
         )
       )
-    )
-  )
+    )  
+  )    
 }
 
 # -------- Server --------
-mod_discovery_server <- function(id, data_path = "2025_discovery_table.xlsx") {
+mod_discovery_server <- function(id, 
+                                 data_path = "2025_discovery_table.xlsx") {
   moduleServer(id, function(input, output, session){
     
     df0 <- reactiveVal(NULL)
     
     observeEvent(TRUE, {
-      if (!file.exists(data_path)) stop("Discovery data file not found: ", data_path)
+      if (!file.exists(data_path)) 
+        stop("Discovery data file not found: ", data_path)
       df <- readxl::read_excel(data_path)
       
-      # ---- accept both price column names ----
+      # accept both price column names
       price_col <- dplyr::case_when(
         "Lowest full price" %in% names(df) ~ "Lowest full price",
         "Lowest_full_price" %in% names(df) ~ "Lowest_full_price",
         TRUE ~ NA_character_
       )
       
-      needed <- c("Code","Title","Artist","Genre","Tag","Venue","Country","Age","Performances","Dates")
+      needed <- c("Code","Title","Artist","Genre","Tag","Venue",
+                  "Country","Age","Performances","Dates")
       miss <- setdiff(needed, names(df))
-      if (length(miss) > 0) stop("Discovery table missing columns: ", paste(miss, collapse = ", "))
-      if (is.na(price_col)) stop("Discovery table missing columns: Lowest full price (or Lowest_full_price)")
+      if (length(miss) > 0) 
+        stop("Discovery table missing columns: ", 
+             paste(miss, collapse = ", "))
+      if (is.na(price_col)) 
+        stop("Discovery table missing columns: Lowest full price")
       
       # Standardise + parse
       df <- df %>%
@@ -126,32 +151,36 @@ mod_discovery_server <- function(id, data_path = "2025_discovery_table.xlsx") {
           Venue   = str_squish(as.character(.data[["Venue"]])),
           Country = str_squish(as.character(.data[["Country"]])),
           Age     = str_squish(as.character(.data[["Age"]])),
-          Performances = suppressWarnings(as.integer(.data[["Performances"]])),
-          Dates = str_squish(as.character(.data[["Dates"]])),
-          
-          # unify: create a display column named `Lowest full price`
+          Performances = suppressWarnings(
+            as.integer(.data[["Performances"]])),
+          Dates   = str_squish(as.character(.data[["Dates"]])),
           `Lowest full price` = as.character(.data[[price_col]]),
-          price_num = suppressWarnings(as.numeric(gsub("[^0-9.]+", "", as.character(.data[[price_col]]))))
+          price_num = suppressWarnings(
+            as.numeric(gsub("[^0-9.]+", "",
+                            as.character(.data[[price_col]]))))
         ) %>%
         filter(!is.na(Code), Code != "") %>%
         distinct(Code, .keep_all = TRUE)
       
       df0(df)
       
-      # ---- populate filters from data ----
-      genres <- sort(unique(df$Genre[df$Genre != "" & !is.na(df$Genre)]))
-      ages   <- sort(unique(df$Age[df$Age != "" & !is.na(df$Age)]))
-      countries <- sort(unique(df$Country[df$Country != "" & !is.na(df$Country)]))
+      # populate filters
+      genres    <- sort(unique(
+        df$Genre[df$Genre != "" & !is.na(df$Genre)]))
+      countries <- sort(unique(
+        df$Country[df$Country != "" & !is.na(df$Country)]))
       
       tags_vec <- df$Tag[df$Tag != "" & !is.na(df$Tag)]
       tags_vec <- unlist(strsplit(tags_vec, "\\s*,\\s*"))
       tags_vec <- sort(unique(str_squish(tags_vec)))
       tags_vec <- tags_vec[tags_vec != ""]
-
-      updateSelectizeInput(session, "genre",   choices = genres,    server = TRUE)
-      updateSelectizeInput(session, "age",     choices = ages,      server = TRUE)
-      updateSelectizeInput(session, "country", choices = countries, server = TRUE)
-      updateSelectizeInput(session, "tag",     choices = tags_vec,  server = TRUE)
+      
+      updateSelectizeInput(session, "genre",   
+                           choices = genres,    server = TRUE)
+      updateSelectizeInput(session, "country", 
+                           choices = countries, server = TRUE)
+      updateSelectizeInput(session, "tag",     
+                           choices = tags_vec,  server = TRUE)
       
     }, once = TRUE)
     
@@ -160,7 +189,8 @@ mod_discovery_server <- function(id, data_path = "2025_discovery_table.xlsx") {
       req(df)
       
       # 1) search
-      q <- str_squish(tolower(if (is.null(input$q)) "" else input$q))
+      q <- str_squish(tolower(
+        if (is.null(input$q)) "" else input$q))
       if (nzchar(q)) {
         df <- df %>%
           filter(
@@ -180,8 +210,11 @@ mod_discovery_server <- function(id, data_path = "2025_discovery_table.xlsx") {
       # 3) Tags
       if (!is.null(input$tag) && length(input$tag) > 0) {
         sel <- str_replace_all(input$tag, "([\\W])", "\\\\\\1")
-        pat <- paste0("(^|,)\\s*(", paste(sel, collapse="|"), ")\\s*(,|$)")
-        df <- df %>% filter(str_detect(Tag, regex(pat, ignore_case = TRUE)))
+        pat <- paste0("(^|,)\\s*(", 
+                      paste(sel, collapse="|"), 
+                      ")\\s*(,|$)")
+        df <- df %>% 
+          filter(str_detect(Tag, regex(pat, ignore_case = TRUE)))
       }
       
       # 4) Country
@@ -189,22 +222,37 @@ mod_discovery_server <- function(id, data_path = "2025_discovery_table.xlsx") {
         df <- df %>% filter(Country %in% input$country)
       }
       
-      # 5) Age
-      if (!is.null(input$age) && length(input$age) > 0) {
-        df <- df %>% filter(Age %in% input$age)
+      # 5) Age — smart interval filter
+      if (!is.null(input$age_input) && !is.na(input$age_input)) {
+        user_age <- as.numeric(input$age_input)
+        df <- df %>%
+          filter(
+            is.na(Age) | Age == "" |
+              sapply(Age, function(a) {
+                num <- suppressWarnings(
+                  as.numeric(gsub("[^0-9]", "", a)))
+                if (is.na(num)) return(TRUE)
+                user_age >= num
+              })
+          )
       }
       
       # 6) Price filter + sort
-      price_mode <- if (is.null(input$price)) "Low to high" else input$price
+      price_mode <- if (is.null(input$price)) "Low to high" 
+      else input$price
       
       if (price_mode == "Free") {
-        df <- df %>% filter(!is.na(price_num), price_num == 0)
+        df <- df %>% 
+          filter(!is.na(price_num), price_num == 0)
       } else if (price_mode == "0-15") {
-        df <- df %>% filter(!is.na(price_num), price_num >= 0, price_num <= 15)
+        df <- df %>% 
+          filter(!is.na(price_num), price_num >= 0, price_num <= 15)
       } else if (price_mode == "15-30") {
-        df <- df %>% filter(!is.na(price_num), price_num > 15, price_num <= 30)
+        df <- df %>% 
+          filter(!is.na(price_num), price_num > 15, price_num <= 30)
       } else if (price_mode == "30+") {
-        df <- df %>% filter(!is.na(price_num), price_num > 30)
+        df <- df %>% 
+          filter(!is.na(price_num), price_num > 30)
       }
       
       if (price_mode == "Low to high") {
@@ -224,8 +272,7 @@ mod_discovery_server <- function(id, data_path = "2025_discovery_table.xlsx") {
         select(
           Title, Artist, Genre, Tag, Venue, Country,
           `Lowest full price`,
-          Age, Performances,
-          Dates
+          Age, Performances, Dates
         )
       
       DT::datatable(

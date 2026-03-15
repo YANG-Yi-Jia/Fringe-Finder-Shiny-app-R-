@@ -132,7 +132,7 @@ body {
   box-shadow: none !important;
 }
 
-/* ✅ Searchbox typography: smaller + cleaner */
+/* Searchbox typography: smaller + cleaner */
 input.form-control[type="text"]{
   font-size: 14px !important;        /* smaller text */
   padding: 10px 12px !important;     /* tighter padding -> more room */
@@ -141,7 +141,7 @@ input.form-control[type="text"]{
   overflow-x: auto !important;       /* allow horizontal scroll for long input */
 }
 
-/* ✅ Placeholder: nicer truncation */
+/* laceholder: nicer truncation */
 input.form-control[type="text"]::placeholder,
 .selectize-input input::placeholder {
   color: rgba(255,255,255,0.70) !important;
@@ -162,6 +162,22 @@ input.form-control[type="text"]::placeholder,
 input[type="checkbox"], input[type="radio"] {
   transform: scale(1.1);
   margin-right: 8px;
+}
+
+.selectize-input > input {
+  color: #ffffff !important;
+  -webkit-text-fill-color: #ffffff !important;
+}
+
+.selectize-control.multi .selectize-input .item {
+  color: #ffffff !important;
+  background: rgba(255,255,255,0.20) !important;
+  border: 1px solid rgba(255,255,255,0.35) !important;
+}
+
+.selectize-control.multi .selectize-input .item .remove {
+  color: #ffffff !important;
+  border-left: 1px solid rgba(255,255,255,0.35) !important;
 }
 
 /* =========================

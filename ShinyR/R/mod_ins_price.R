@@ -1,4 +1,4 @@
-# R/mod_ins_price.R  (OPTIMIZED COVER VERSION — + highlight cards, responsive plotly)
+# R/mod_ins_price.R
 library(shiny)
 library(dplyr)
 library(stringr)
@@ -126,11 +126,11 @@ mod_ins_price_server <- function(
     
     pp <- function(x, digits = 1) {
       if (!is.finite(x)) return("NA")
-      x2 <- round(x, 6) # 防浮点误差
+      x2 <- round(x, 6) 
       paste0(ifelse(x2 >= 0, "+", ""), round(100 * x2, digits), " pp")
     }
     
-    # ---- years active (from ev_filtered slider) ----
+    
     years_active <- reactive({
       ev <- ev_filtered(); req(ev)
       ys <- sort(unique(as.integer(ev$year)))
@@ -138,9 +138,8 @@ mod_ins_price_server <- function(
       if (length(ys)) ys else years_vec
     })
     
-    # =========================================================
+
     # Chart 1 (boxplots): base once
-    # =========================================================
     genre_price_year_data <- reactive({
       ev <- ev_filtered(); req(ev)
       need_cols(ev, c("year", "lowest_full_price", "genre"))
@@ -231,9 +230,7 @@ mod_ins_price_server <- function(
     })
     
     
-    # =========================================================
     # Chart 2 (age bars): aggregate once
-    # =========================================================
     age_levels <- c("0+","3+","5+","8+","12+","14+","16+","18+")
     
     age_genre_year_medians <- reactive({
@@ -322,9 +319,7 @@ mod_ins_price_server <- function(
         onRender("function(el){setTimeout(function(){Plotly.Plots.resize(el)}, 50);}")
     })
     
-    # =========================================================
-    # Shared concession base (ONE time)
-    # =========================================================
+    # Shared concession base
     conc_event_base <- reactive({
       ev <- ev_filtered(); req(ev)
       need_cols(ev, c("year", "code", "venue", "venue_code", "genre",
@@ -359,9 +354,7 @@ mod_ins_price_server <- function(
         )
     })
     
-    # =========================================================
     # Chart 3: venue offer rate (line guarded)
-    # =========================================================
     venue_offer <- reactive({
       df <- conc_event_base(); req(df)
       ys <- years_active()
@@ -444,9 +437,7 @@ mod_ins_price_server <- function(
         onRender("function(el){setTimeout(function(){Plotly.Plots.resize(el)}, 50);}")
     })
     
-    # =========================================================
     # Chart 4: genre concessions (line guarded)
-    # =========================================================
     genre_concessions_lines <- reactive({
       df <- conc_event_base(); req(df)
       ys <- years_active()
@@ -530,9 +521,7 @@ mod_ins_price_server <- function(
         onRender("function(el){setTimeout(function(){Plotly.Plots.resize(el)}, 50);}")
     })
     
-    # =========================================================
-    # Highlights (reuse aggregated data; more robust)
-    # =========================================================
+    # Highlights
     output$hi_genre_price <- renderUI({
       df <- genre_price_year_data(); req(df)
       ys <- years_active()
@@ -540,7 +529,7 @@ mod_ins_price_server <- function(
       
       y0 <- min(ys); y1 <- max(ys)
       
-      # yearly medians by genre (consistent with boxplot median)
+      # yearly medians by genre
       med_by <- df %>%
         group_by(year, genreF) %>%
         summarise(med = median(price, na.rm = TRUE), .groups = "drop")
@@ -549,7 +538,7 @@ mod_ins_price_server <- function(
       med_y1 <- med_by %>% filter(year == y1) %>% arrange(desc(med))
       top2 <- med_y1 %>% slice_head(n = 2)
       
-      # compute change in medians between y0 and y1 (only for genres observed in both)
+      # compute change
       wide <- med_by %>%
         filter(year %in% c(y0, y1)) %>%
         pivot_wider(names_from = year, values_from = med)

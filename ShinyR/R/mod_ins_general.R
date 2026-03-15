@@ -139,7 +139,7 @@ mod_ins_general_server <- function(id, ev_filtered) {
       paste0(ifelse(x2 >= 0, "+", ""), round(100 * x2, digits), " pp")
     }
     
-    # ---------- core summaries ----------
+    # summary
     shows_venues_by_year <- reactive({
       ev <- ev_filtered(); req(ev)
       ev %>%
@@ -224,7 +224,7 @@ mod_ins_general_server <- function(id, ev_filtered) {
         mutate(genre = factor(genre, levels = order_levels))
     })
     
-    # ---------- postcode: per-year top15 + rank label ----------
+    # postcode: per-year top1
     postcode_ranked <- reactive({
       ev <- ev_filtered(); req(ev)
       ys <- years_vec(); if (!length(ys)) ys <- 2022:2025
@@ -268,7 +268,7 @@ mod_ins_general_server <- function(id, ev_filtered) {
         mutate(sector_rank_key = factor(sector_rank_key, levels = rev(unique(levs))))
     })
     
-    # ---------- plots ----------
+    
     output$p_shows_venues <- renderPlotly({
       df <- shows_venues_by_year(); req(df)
       validate(need(nrow(df) > 0, "No data."))
@@ -451,7 +451,7 @@ mod_ins_general_server <- function(id, ev_filtered) {
         config(displayModeBar = FALSE, responsive = TRUE)
     })
     
-    # ---------- highlight cards ----------
+    # highlight cards
     output$hi_shows_venues <- renderUI({
       df <- shows_venues_by_year(); req(df)
       df <- df %>% arrange(year)
